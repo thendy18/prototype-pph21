@@ -57,6 +57,7 @@ interface PayrollStore {
   employees: Record<string, EmployeeData>;
   metodePajakGlobal: MetodePajak;
 
+  resetStore: () => void;
   setConfigBpjs: (newConfig: Partial<KonfigurasiTarif>) => void;
   setMetodePajakGlobal: (metode: MetodePajak) => void;
   loadDefaultBpjs: () => void;
@@ -424,12 +425,24 @@ const EMPTY_BPJS: KonfigurasiTarif = {
   basisUpahBpjs: 'GAJI_POKOK_PLUS_TUNJANGAN_TETAP',
 };
 
-export const usePayrollStore = create<PayrollStore>((set, get) => ({
-  configBpjs: EMPTY_BPJS,
-  employees: {},
-  metodePajakGlobal: 'GROSS',
+function createEmptyBpjsConfig(): KonfigurasiTarif {
+  return { ...EMPTY_BPJS };
+}
 
-  loadDefaultBpjs: () => get().setConfigBpjs(DEFAULT_TARIF_BPJS),
+function createInitialStoreState() {
+  return {
+    configBpjs: createEmptyBpjsConfig(),
+    employees: {} as Record<string, EmployeeData>,
+    metodePajakGlobal: 'GROSS' as MetodePajak,
+  };
+}
+
+export const usePayrollStore = create<PayrollStore>((set, get) => ({
+  ...createInitialStoreState(),
+
+  resetStore: () => set(createInitialStoreState()),
+
+  loadDefaultBpjs: () => get().setConfigBpjs({ ...DEFAULT_TARIF_BPJS }),
 
   setMetodePajakGlobal: (metode) =>
     set((state) => {
