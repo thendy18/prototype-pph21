@@ -7,6 +7,7 @@ import {
   OverrideBpjsPerusahaan,
 } from '../types/payroll';
 import { DEFAULT_TARIF_BPJS } from './constants';
+import { floorDecimalProduct } from './decimalMath';
 
 export interface ParameterHitungBpjs {
   gajiPokok: number;
@@ -123,23 +124,23 @@ function hitungKomponenPerusahaanInternal(
 
   const premiJkk = ambilNominalOverride(
     overrideBpjsPerusahaan.premiJkk,
-    floorRupiah(dasarUpahBpjs * config.rateJkkPerusahaan)
+    floorDecimalProduct(dasarUpahBpjs, config.rateJkkPerusahaan)
   );
   const premiJkm = ambilNominalOverride(
     overrideBpjsPerusahaan.premiJkm,
-    floorRupiah(dasarUpahBpjs * config.rateJkmPerusahaan)
+    floorDecimalProduct(dasarUpahBpjs, config.rateJkmPerusahaan)
   );
   const premiJht = ambilNominalOverride(
     overrideBpjsPerusahaan.premiJht,
-    floorRupiah(dasarUpahBpjs * config.rateJhtPerusahaan)
+    floorDecimalProduct(dasarUpahBpjs, config.rateJhtPerusahaan)
   );
   const premiBpjsKes = ambilNominalOverride(
     overrideBpjsPerusahaan.premiBpjsKes,
-    floorRupiah(dasarBpjsKes * config.rateBpjsKesPerusahaan)
+    floorDecimalProduct(dasarBpjsKes, config.rateBpjsKesPerusahaan)
   );
   const premiJp = ambilNominalOverride(
     overrideBpjsPerusahaan.premiJp,
-    floorRupiah(dasarJp * config.rateJpPerusahaan)
+    floorDecimalProduct(dasarJp, config.rateJpPerusahaan)
   );
 
   const totalPenambahBrutoPajak = premiJkk + premiJkm + premiBpjsKes;
@@ -171,15 +172,15 @@ function hitungKomponenKaryawanInternal(
 
   const iuranJht = ambilNominalOverride(
     overrideBpjsKaryawan.iuranJht,
-    floorRupiah(dasarUpahBpjs * config.rateJhtKaryawan)
+    floorDecimalProduct(dasarUpahBpjs, config.rateJhtKaryawan)
   );
   const iuranBpjsKes = ambilNominalOverride(
     overrideBpjsKaryawan.iuranBpjsKes,
-    floorRupiah(dasarBpjsKes * config.rateBpjsKesKaryawan)
+    floorDecimalProduct(dasarBpjsKes, config.rateBpjsKesKaryawan)
   );
   const iuranJp = ambilNominalOverride(
     overrideBpjsKaryawan.iuranJp,
-    floorRupiah(dasarJp * config.rateJpKaryawan)
+    floorDecimalProduct(dasarJp, config.rateJpKaryawan)
   );
 
   const totalPengurangPajak = iuranJht + iuranJp;

@@ -5,6 +5,7 @@ import {
 } from '../types/payroll';
 
 import { TARIF_PASAL_17 } from './constants';
+import { floorDecimalProduct } from './decimalMath';
 
 const DEFAULT_DEEMED_PERSENTASE = 50;
 const RATE_PPH_26_NON_RESIDENT = 0.2;
@@ -63,7 +64,7 @@ function hitungPajakProgresif(
     const rate = TARIF_PASAL_17[index].rate;
     const rentangLapis = batasAtas - batasBawah;
     const dasarTerpakai = Math.min(sisaDpp, rentangLapis);
-    const pajakLapis = floorRupiah(dasarTerpakai * rate);
+    const pajakLapis = floorDecimalProduct(dasarTerpakai, rate);
 
     totalPajak += pajakLapis;
     sisaDpp -= dasarTerpakai;
@@ -81,12 +82,13 @@ function hitungPajakProgresif(
 
 function hitungPajakResident(input: InputNonPegawai, totalBruto: number): HasilPajakDasar {
   const deemedPersentase = input.deemedPersentase ?? DEFAULT_DEEMED_PERSENTASE;
-  const dasarPengenaanPajak = floorRupiah(
-    totalBruto * (deemedPersentase / 100)
+  const dasarPengenaanPajak = floorDecimalProduct(
+    totalBruto,
+    deemedPersentase / 100
   );
   const progresif = hitungPajakProgresif(dasarPengenaanPajak);
   const multiplierIdentitas = gunakanTarifLebihTinggiIdentitas(input) ? 1.2 : 1;
-  const pajakFinal = floorRupiah(progresif.totalPajak * multiplierIdentitas);
+  const pajakFinal = floorDecimalProduct(progresif.totalPajak, multiplierIdentitas);
   const rateEfektif = totalBruto > 0 ? pajakFinal / totalBruto : 0;
 
   return {
@@ -103,7 +105,7 @@ function hitungPajakResident(input: InputNonPegawai, totalBruto: number): HasilP
 }
 
 function hitungPajakNonResident(totalBruto: number): HasilPajakDasar {
-  const pajak = floorRupiah(totalBruto * RATE_PPH_26_NON_RESIDENT);
+  const pajak = floorDecimalProduct(totalBruto, RATE_PPH_26_NON_RESIDENT);
 
   return {
     pasalPemotongan: 'PPh26',

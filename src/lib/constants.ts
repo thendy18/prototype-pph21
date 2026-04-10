@@ -45,7 +45,7 @@ export const DEFAULT_TARIF_BPJS: KonfigurasiTarif = {
   rateZakat: 0,
 
   // Batas Maksimal Gaji (Plafon)
-  plafonJp: 10_547_000,           // Plafon JP
+  plafonJp: 10_547_400,           // Plafon JP
   plafonBpjsKes: 12_000_000,      // Plafon BPJS Kesehatan
 };
 
@@ -59,8 +59,8 @@ export const BATAS_PENGURANG = {
     MAX_TAHUNAN: 6_000_000 // Maks Rp 6.000.000 / tahun
   },
   IURAN_PENSIUN: {
-    MAX_BULANAN: 105_470,  // (10.547.000 * 1%)
-    MAX_TAHUNAN: 1_265_640 // (105.470 * 12)
+    MAX_BULANAN: 105_474,  // (10.547.400 * 1%)
+    MAX_TAHUNAN: 1_265_688 // (105.474 * 12)
   }
 } as const;
 

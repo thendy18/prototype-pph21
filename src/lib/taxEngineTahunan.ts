@@ -14,6 +14,7 @@ import {
   TARIF_PASAL_17,
 } from './constants';
 
+import { floorDecimalProduct } from './decimalMath';
 import { hitungPajakBulanan } from './taxEngineBulanan';
 
 const MAX_ITERASI_GROSS_UP_TAHUNAN = 50;
@@ -73,7 +74,7 @@ function hitungPajakPasal17(pkpDibulatkan: number): number {
 
     const rentang = lapis.max - lapis.min;
     const kenaLapisIni = Math.min(sisaPkp, rentang);
-    totalPajak += floorRupiah(kenaLapisIni * lapis.rate);
+    totalPajak += floorDecimalProduct(kenaLapisIni, lapis.rate);
     sisaPkp -= kenaLapisIni;
   }
 
@@ -112,7 +113,7 @@ function hitungPenyesuaianTahunanDetail(
   const totalBrutoAktual = totalBrutoSebelumnya + brutoMasaTerakhirFinal;
   const maxBiayaJabatan = jumlahBulanAktif * BATAS_PENGURANG.BIAYA_JABATAN.MAX_BULANAN;
   const totalBiayaJabatan = Math.min(
-    floorRupiah(totalBrutoAktual * BATAS_PENGURANG.BIAYA_JABATAN.RATE),
+    floorDecimalProduct(totalBrutoAktual, BATAS_PENGURANG.BIAYA_JABATAN.RATE),
     maxBiayaJabatan
   );
 
@@ -137,8 +138,9 @@ function hitungPenyesuaianTahunanDetail(
       : floorRupiah((totalPajakSetahunan * jumlahBulanAktif) / 12);
 
   const multiplierIdentitas = gunakanTarifLebihTinggiIdentitas(karyawan) ? 1.2 : 1;
-  const totalPajakBagianTahunFinal = floorRupiah(
-    totalPajakBagianTahun * multiplierIdentitas
+  const totalPajakBagianTahunFinal = floorDecimalProduct(
+    totalPajakBagianTahun,
+    multiplierIdentitas
   );
 
   const pajakMasaTerakhir = totalPajakBagianTahunFinal - totalPajakSebelumnya;

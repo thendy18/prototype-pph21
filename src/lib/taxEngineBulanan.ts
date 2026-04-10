@@ -16,6 +16,7 @@ import {
 } from './constants';
 
 import { hitungKomponenBpjs } from './bpjsCalculator';
+import { floorDecimalProduct } from './decimalMath';
 
 const RATE_PPH_26_NON_RESIDENT = 0.2;
 const MAX_ITERASI_GROSS_UP = 50;
@@ -80,9 +81,9 @@ function hitungPajakResidentBulanan(
   rumusSurcharge: string;
 } {
   const rateTER = cariTarifTER(brutoPajak, kategoriTER);
-  const pajakNormal = floorRupiah(brutoPajak * rateTER);
+  const pajakNormal = floorDecimalProduct(brutoPajak, rateTER);
   const multiplierIdentitas = getMultiplierIdentitas(karyawan);
-  const pajakFinal = floorRupiah(pajakNormal * multiplierIdentitas);
+  const pajakFinal = floorDecimalProduct(pajakNormal, multiplierIdentitas);
 
   return {
     rateTER,
@@ -101,7 +102,7 @@ function hitungPajakNonResidentBulanan(brutoPajak: number): {
   pajakFinal: number;
   rumusSurcharge: string;
 } {
-  const pajak = floorRupiah(brutoPajak * RATE_PPH_26_NON_RESIDENT);
+  const pajak = floorDecimalProduct(brutoPajak, RATE_PPH_26_NON_RESIDENT);
   return {
     rateTER: null,
     pajakNormal: pajak,
