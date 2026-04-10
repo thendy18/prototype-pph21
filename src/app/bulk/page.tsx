@@ -2,9 +2,18 @@
 
 import { ChangeEvent, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { generateCoretaxXML } from '../../actions/exportXML';
+import {
+  downloadBpmpXml,
+  generateBpmpXml,
+  type BpmpGlobalSettings,
+} from '../../actions/exportXML';
+import {
+  downloadAllSlipGajiZip,
+  downloadSlipGajiPdf,
+} from '../../actions/exportSlipGaji';
 import { usePayrollStore } from '../../store/usePayrollStore';
 import { DataPerusahaan, KonfigurasiTarif, MetodePajak } from '../../types/payroll';
+import { SlipGajiSource } from '../../types/slipGaji';
 
 const RATE_KEYS = [
   'rateJkkPerusahaan',
@@ -41,6 +50,17 @@ function formatLabel(key: string): string {
     .trim();
 }
 
+function formatDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+type BpmpModalSettings = Omit<BpmpGlobalSettings, 'withholdingDate' | 'strict'> & {
+  withholdingDate: string;
+};
+
 export default function PayrollProPage() {
   const {
     configBpjs,
@@ -54,66 +74,181 @@ export default function PayrollProPage() {
   } = usePayrollStore();
 
   const [masaPajak, setMasaPajak] = useState(10);
+  const [tahunPayroll, setTahunPayroll] = useState(new Date().getFullYear());
   const [selectedNik, setSelectedNik] = useState<string | null>(null);
+  const [isBpmpModalOpen, setIsBpmpModalOpen] = useState(false);
+  const [slipExportNik, setSlipExportNik] = useState<string | null>(null);
+  const [isExportingAllSlip, setIsExportingAllSlip] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [companyProfile, setCompanyProfile] = useState<
-    DataPerusahaan & { withholdingDate: string }
-  >({
+  const [companyProfile, setCompanyProfile] = useState<DataPerusahaan>({
     namaPerusahaan: 'PT MAJU',
     npwpPemotong: '0029482015507000',
     idTku: '0029482015507000000000',
-    withholdingDate: '2026-10-21',
+  });
+  const [bpmpSettings, setBpmpSettings] = useState<BpmpModalSettings>(() => {
+    const today = new Date();
+    return {
+      taxPeriodMonth: 10,
+      taxPeriodYear: today.getFullYear(),
+      withholdingDate: formatDateInputValue(today),
+    };
   });
 
   const employeeList = useMemo(() => Object.values(employees), [employees]);
   const activeEmp = selectedNik ? employees[selectedNik] : null;
   const activeInput = activeEmp?.monthlyInputs[masaPajak];
   const activeResult = activeEmp?.monthlyHasils[masaPajak];
+  const availableTaxYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 7 }, (_, index) => currentYear - 2 + index);
+  }, []);
+  type EmployeeListItem = (typeof employeeList)[number];
+
+  const slipEligibleEmployees = useMemo(
+    () =>
+      employeeList.filter(
+        (emp) =>
+          emp.karyawan.tipeKaryawan === 'TETAP' &&
+          !!emp.monthlyInputs[masaPajak] &&
+          !!emp.monthlyHasils[masaPajak] &&
+          emp.monthlyHasils[masaPajak].totalBruto > 0
+      ),
+    [employeeList, masaPajak]
+  );
+
+  const isSlipEligible = (emp: EmployeeListItem): boolean =>
+    emp.karyawan.tipeKaryawan === 'TETAP' &&
+    !!emp.monthlyInputs[masaPajak] &&
+    !!emp.monthlyHasils[masaPajak] &&
+    emp.monthlyHasils[masaPajak].totalBruto > 0;
+
+  const toSlipSource = (emp: EmployeeListItem): SlipGajiSource => ({
+    namaPerusahaan: companyProfile.namaPerusahaan,
+    bulan: masaPajak,
+    tahun: tahunPayroll,
+    karyawan: emp.karyawan,
+    input: emp.monthlyInputs[masaPajak],
+    hasil: emp.monthlyHasils[masaPajak],
+  });
 
   const handleExcel = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf);
-    const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]]);
-    importExcel(data);
-    setExportError(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf);
+      const data = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+        wb.Sheets[wb.SheetNames[0]],
+        {
+          raw: true,
+          rawNumbers: false,
+          defval: '',
+        }
+      );
+      importExcel(data);
+      setExportError(null);
+    } catch (error) {
+      setExportError(
+        error instanceof Error ? error.message : 'Gagal membaca file Excel.'
+      );
+    }
   };
 
-  const downloadXML = () => {
+  const openBpmpModal = () => {
+    const today = new Date();
+    setBpmpSettings({
+      taxPeriodMonth: masaPajak,
+      taxPeriodYear: today.getFullYear(),
+      withholdingDate: formatDateInputValue(today),
+    });
+    setExportError(null);
+    setIsBpmpModalOpen(true);
+  };
+
+  const closeBpmpModal = () => {
+    setIsBpmpModalOpen(false);
+  };
+
+  const downloadXML = (settings: BpmpModalSettings) => {
     try {
       const data = employeeList
-        .filter((emp) => emp.karyawan.tipeKaryawan === 'TETAP' && emp.monthlyHasils[masaPajak]?.totalBruto > 0)
+        .filter(
+          (emp) =>
+            emp.monthlyHasils[settings.taxPeriodMonth]?.totalBruto > 0
+        )
         .map((emp) => ({
           karyawan: emp.karyawan,
-          hasilKalkulasi: emp.monthlyHasils[masaPajak],
-          position: emp.karyawan.jabatan ?? 'Pegawai',
+          hasilKalkulasi: emp.monthlyHasils[settings.taxPeriodMonth],
         }));
 
-      if (data.length === 0) throw new Error('Tidak ada pegawai tetap aktif untuk export BPMP.');
+      if (data.length === 0) {
+        throw new Error('Tidak ada karyawan aktif untuk export BPMP.');
+      }
 
-      const xml = generateCoretaxXML(
+      const xml = generateBpmpXml(
         {
           namaPerusahaan: companyProfile.namaPerusahaan,
           npwpPemotong: companyProfile.npwpPemotong,
           idTku: companyProfile.idTku,
         },
-        masaPajak,
-        2026,
         data,
-        { withholdingDate: companyProfile.withholdingDate, strict: true }
+        {
+          taxPeriodMonth: settings.taxPeriodMonth,
+          taxPeriodYear: settings.taxPeriodYear,
+          withholdingDate: settings.withholdingDate,
+          strict: true,
+        }
       );
 
-      const blob = new Blob([xml], { type: 'text/xml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `BPMP_Masa_${masaPajak}.xml`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBpmpXml(xml);
       setExportError(null);
+      closeBpmpModal();
     } catch (error) {
       setExportError(error instanceof Error ? error.message : 'Gagal export XML.');
+    }
+  };
+
+  const handleDownloadSlip = async (emp: EmployeeListItem) => {
+    if (!isSlipEligible(emp)) {
+      setExportError('Slip gaji hanya tersedia untuk pegawai TETAP yang punya hasil di periode aktif.');
+      return;
+    }
+
+    setSlipExportNik(emp.karyawan.nik);
+    setExportError(null);
+
+    try {
+      await downloadSlipGajiPdf(toSlipSource(emp));
+    } catch (error) {
+      setExportError(
+        error instanceof Error ? error.message : 'Gagal membuat slip gaji PDF.'
+      );
+    } finally {
+      setSlipExportNik(null);
+    }
+  };
+
+  const handleDownloadAllSlip = async () => {
+    if (slipEligibleEmployees.length === 0) {
+      setExportError('Tidak ada pegawai TETAP yang eligible untuk slip gaji pada periode aktif.');
+      return;
+    }
+
+    setIsExportingAllSlip(true);
+    setExportError(null);
+
+    try {
+      await downloadAllSlipGajiZip(
+        slipEligibleEmployees.map(toSlipSource),
+        masaPajak,
+        tahunPayroll
+      );
+    } catch (error) {
+      setExportError(
+        error instanceof Error ? error.message : 'Gagal membuat ZIP slip gaji.'
+      );
+    } finally {
+      setIsExportingAllSlip(false);
     }
   };
 
@@ -147,7 +282,7 @@ export default function PayrollProPage() {
             </div>
           </div>
 
-          <div className="grid gap-4 p-6 lg:grid-cols-4">
+          <div className="grid gap-4 p-6 lg:grid-cols-3">
             <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 pb-3 pt-2">
               <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-500">Nama Perusahaan</label>
               <input
@@ -173,15 +308,6 @@ export default function PayrollProPage() {
                 onChange={(e) => setCompanyProfile((prev) => ({ ...prev, idTku: e.target.value }))}
                 className="w-full bg-transparent text-sm outline-none focus:text-indigo-300"
                 placeholder="ID TKU"
-              />
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-950 px-3 pb-3 pt-2">
-              <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-500">Tanggal Pemotongan</label>
-              <input
-                type="date"
-                value={companyProfile.withholdingDate}
-                onChange={(e) => setCompanyProfile((prev) => ({ ...prev, withholdingDate: e.target.value }))}
-                className="w-full bg-transparent text-sm outline-none focus:text-indigo-300"
               />
             </div>
           </div>
@@ -241,7 +367,7 @@ export default function PayrollProPage() {
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-3">
+        <section className="grid gap-6 lg:grid-cols-4">
           <div className="flex items-center justify-between rounded-2xl bg-indigo-600 p-6 lg:col-span-2">
             <div>
               <h2 className="text-xl font-black">Upload Excel</h2>
@@ -258,22 +384,55 @@ export default function PayrollProPage() {
             >
               {[...Array(12)].map((_, i) => (
                 <option key={i + 1} value={i + 1}>
-                  Bulan {i + 1} - 2026
+                  Bulan {i + 1}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+            <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-500">Tahun Payroll</label>
+            <select
+              value={tahunPayroll}
+              onChange={(e) => setTahunPayroll(Number(e.target.value))}
+              className="w-full rounded-xl border border-slate-800 bg-slate-950 p-3 outline-none focus:border-indigo-500"
+            >
+              {availableTaxYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
                 </option>
               ))}
             </select>
           </div>
         </section>
 
-        {exportError && <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{exportError}</div>}
+        {exportError && (
+          <div className="whitespace-pre-line rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+            {exportError}
+          </div>
+        )}
 
         {employeeList.length > 0 && (
           <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-800 p-6">
-              <h2 className="text-lg font-black uppercase tracking-widest">Variable Matrix (Masa {masaPajak})</h2>
-              <button onClick={downloadXML} className="rounded-xl bg-emerald-600 px-6 py-2 text-xs font-black">
-                EXPORT BPMP XML
-              </button>
+              <h2 className="text-lg font-black uppercase tracking-widest">
+                Variable Matrix (Masa {masaPajak}/{tahunPayroll})
+              </h2>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleDownloadAllSlip}
+                  disabled={isExportingAllSlip || slipEligibleEmployees.length === 0}
+                  className={`rounded-xl px-6 py-2 text-xs font-black ${
+                    isExportingAllSlip || slipEligibleEmployees.length === 0
+                      ? 'cursor-not-allowed bg-slate-700 text-slate-400'
+                      : 'bg-amber-500 text-slate-950'
+                  }`}
+                >
+                  {isExportingAllSlip ? 'Membuat ZIP...' : 'Download Semua Slip'}
+                </button>
+                <button onClick={openBpmpModal} className="rounded-xl bg-emerald-600 px-6 py-2 text-xs font-black">
+                  Generate XML BPMP
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -286,13 +445,16 @@ export default function PayrollProPage() {
                     <th className="p-4 text-center">Lembur</th>
                     <th className="p-4 text-right">Tax</th>
                     <th className="p-4 text-right">THP</th>
-                    <th className="p-4 text-center">Audit</th>
+                    <th className="p-4 text-center">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {employeeList.map((emp) => {
                     const input = emp.monthlyInputs[masaPajak];
                     const result = emp.monthlyHasils[masaPajak];
+                    const slipEligible = isSlipEligible(emp);
+                    const isGeneratingSlip =
+                      slipExportNik === emp.karyawan.nik;
                     return (
                       <tr key={emp.karyawan.nik} className="hover:bg-slate-800/50">
                         <td className="p-4">
@@ -323,9 +485,22 @@ export default function PayrollProPage() {
                         <td className="p-4 text-right font-bold text-rose-400">{formatCurrency(result.pajakTerutang)}</td>
                         <td className="p-4 text-right font-black text-emerald-400">{formatCurrency(result.thpBersih)}</td>
                         <td className="p-4 text-center">
-                          <button onClick={() => setSelectedNik(emp.karyawan.nik)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-indigo-300">
-                            Detail
-                          </button>
+                          <div className="flex flex-wrap items-center justify-center gap-2">
+                            <button onClick={() => setSelectedNik(emp.karyawan.nik)} className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-bold text-indigo-300">
+                              Detail
+                            </button>
+                            <button
+                              onClick={() => void handleDownloadSlip(emp)}
+                              disabled={!slipEligible || isGeneratingSlip || isExportingAllSlip}
+                              className={`rounded-lg px-3 py-2 text-xs font-bold ${
+                                !slipEligible || isGeneratingSlip || isExportingAllSlip
+                                  ? 'cursor-not-allowed border border-slate-800 bg-slate-900 text-slate-500'
+                                  : 'border border-amber-500/40 bg-amber-500/10 text-amber-300'
+                              }`}
+                            >
+                              {isGeneratingSlip ? 'Membuat...' : 'Slip PDF'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -334,6 +509,107 @@ export default function PayrollProPage() {
               </table>
             </div>
           </section>
+        )}
+
+        {isBpmpModalOpen && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+            <button
+              aria-label="Tutup modal Generate XML BPMP"
+              className="absolute inset-0"
+              onClick={closeBpmpModal}
+            />
+            <div className="relative z-10 w-full max-w-xl rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-emerald-400">Generate XML BPMP</h3>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Atur masa pajak, tahun pajak, dan tanggal pemotongan sebelum download XML.
+                  </p>
+                </div>
+                <button
+                  onClick={closeBpmpModal}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-300"
+                >
+                  Tutup
+                </button>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    Masa Pajak
+                  </label>
+                  <select
+                    value={bpmpSettings.taxPeriodMonth}
+                    onChange={(e) =>
+                      setBpmpSettings((prev) => ({
+                        ...prev,
+                        taxPeriodMonth: Number(e.target.value),
+                      }))
+                    }
+                    className="w-full bg-transparent text-sm outline-none focus:text-emerald-300"
+                  >
+                    {[...Array(12)].map((_, i) => (
+                      <option key={i + 1} value={i + 1}>
+                        Bulan {i + 1}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    Tahun Pajak
+                  </label>
+                  <select
+                    value={bpmpSettings.taxPeriodYear}
+                    onChange={(e) =>
+                      setBpmpSettings((prev) => ({
+                        ...prev,
+                        taxPeriodYear: Number(e.target.value),
+                      }))
+                    }
+                    className="w-full bg-transparent text-sm outline-none focus:text-emerald-300"
+                  >
+                    {availableTaxYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                    Tanggal Pemotongan
+                  </label>
+                  <input
+                    type="date"
+                    value={bpmpSettings.withholdingDate}
+                    onChange={(e) =>
+                      setBpmpSettings((prev) => ({
+                        ...prev,
+                        withholdingDate: e.target.value,
+                      }))
+                    }
+                    className="w-full bg-transparent text-sm outline-none focus:text-emerald-300"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] text-slate-500">
+                  NPWP Pemotong dan ID TKU tetap memakai data perusahaan di form utama.
+                </p>
+                <button
+                  onClick={() => downloadXML(bpmpSettings)}
+                  className="rounded-xl bg-emerald-600 px-5 py-3 text-xs font-black text-white"
+                >
+                  Download XML
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {activeEmp && activeInput && activeResult && (

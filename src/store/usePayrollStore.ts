@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   DataKaryawan,
+  FasilitasPajak,
   HasilKalkulasiTetap,
   InputGajiBulanan,
   KonfigurasiTarif,
@@ -69,9 +70,81 @@ interface PayrollStore {
   ) => void;
 }
 
-function floorRupiah(nilai: unknown): number {
-  const angka = Number(nilai);
+const PASSPORT_KEYS = [
+  'No Paspor',
+  'Nomor Paspor',
+  'Paspor',
+  'Passport',
+  'No Passport',
+] as const;
+
+const FASILITAS_PAJAK_KEYS = [
+  'Fasilitas Pajak',
+  'Tax Certificate',
+  'TaxCertificate',
+] as const;
+
+function coerceCellToString(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return '';
+    return value
+      .toLocaleString('fullwide', {
+        useGrouping: false,
+        maximumFractionDigits: 20,
+      })
+      .trim();
+  }
+  return String(value).trim();
+}
+
+function parseNumericCell(nilai: unknown): number {
+  if (typeof nilai === 'number') {
+    return Number.isFinite(nilai) ? nilai : 0;
+  }
+
+  const raw = coerceCellToString(nilai);
+  if (!raw) return 0;
+
+  const cleaned = raw.replace(/[^\d,.-]/g, '');
+  if (!cleaned || cleaned === '-' || cleaned === '.' || cleaned === ',') {
+    return 0;
+  }
+
+  const commaCount = (cleaned.match(/,/g) ?? []).length;
+  const dotCount = (cleaned.match(/\./g) ?? []).length;
+  const lastComma = cleaned.lastIndexOf(',');
+  const lastDot = cleaned.lastIndexOf('.');
+
+  let normalized = cleaned;
+
+  if (commaCount > 0 && dotCount > 0) {
+    normalized =
+      lastComma > lastDot
+        ? cleaned.replace(/\./g, '').replace(',', '.')
+        : cleaned.replace(/,/g, '');
+  } else if (commaCount > 0) {
+    const [whole, fraction = ''] = cleaned.split(',');
+    normalized =
+      commaCount > 1 || fraction.length === 3
+        ? cleaned.replace(/,/g, '')
+        : `${whole}.${fraction}`;
+  } else if (dotCount > 0) {
+    const [, fraction = ''] = cleaned.split('.');
+    normalized =
+      dotCount > 1 || fraction.length === 3
+        ? cleaned.replace(/\./g, '')
+        : cleaned;
+  }
+
+  const angka = Number(normalized);
   if (!Number.isFinite(angka)) return 0;
+  return angka;
+}
+
+function floorRupiah(nilai: unknown): number {
+  const angka = parseNumericCell(nilai);
   return Math.floor(angka);
 }
 
@@ -84,11 +157,25 @@ function clampMonth(nilai: unknown, fallback: number): number {
 function bacaString(row: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
     const value = row[key];
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      return String(value).trim();
+    const parsed = coerceCellToString(value);
+    if (parsed !== '') {
+      return parsed;
     }
   }
   return '';
+}
+
+function sanitizeDigits(value: unknown): string {
+  return coerceCellToString(value).replace(/\D/g, '');
+}
+
+function sanitizeFixedDigits(value: unknown, length: number): string | null {
+  const digits = sanitizeDigits(value);
+  return digits.length === length ? digits : null;
+}
+
+function isRowEmpty(row: Record<string, unknown>): boolean {
+  return Object.values(row).every((value) => coerceCellToString(value) === '');
 }
 
 function parseTipeKaryawan(row: Record<string, unknown>): TipeKaryawan {
@@ -157,6 +244,34 @@ function parseStatusPtkp(
   }
 
   return tipeKaryawan === 'NON_PEGAWAI' ? '-' : 'TK/0';
+}
+
+function parseFasilitasPajak(row: Record<string, unknown>): FasilitasPajak {
+  const raw = bacaString(row, ...FASILITAS_PAJAK_KEYS).toUpperCase();
+
+  if (
+    raw === 'N/A' ||
+    raw === 'SKB' ||
+    raw === 'DTP' ||
+    raw === 'SKD' ||
+    raw === 'ETC'
+  ) {
+    return raw;
+  }
+
+  return 'N/A';
+}
+
+function parseNoPaspor(
+  row: Record<string, unknown>,
+  residentStatus: ResidentStatus
+): string | null {
+  if (residentStatus !== 'NON_RESIDENT') {
+    return null;
+  }
+
+  const raw = bacaString(row, ...PASSPORT_KEYS);
+  return raw || null;
 }
 
 function buildEmptyResult(
@@ -499,15 +614,40 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
   importExcel: (rows) =>
     set((state) => {
       const newEmployees: Record<string, EmployeeData> = {};
+      const validationErrors: string[] = [];
 
-      rows.forEach((row) => {
-        const nik = bacaString(row, 'NIK', 'Nik');
-        if (!nik) return;
+      rows.forEach((row, index) => {
+        const excelRowNumber = index + 2;
+        if (isRowEmpty(row)) return;
+
+        const rawNik = bacaString(row, 'NIK', 'Nik');
+        const nik = sanitizeFixedDigits(rawNik, 16);
+        if (!rawNik) {
+          validationErrors.push(`Baris ${excelRowNumber}: NIK wajib diisi.`);
+          return;
+        }
+        if (!nik) {
+          validationErrors.push(
+            `Baris ${excelRowNumber}: NIK harus tepat 16 digit angka.`
+          );
+          return;
+        }
 
         const tipeKaryawan = parseTipeKaryawan(row);
         const statusIdentitas = parseStatusIdentitas(row);
         const metodePajak = parseMetodePajak(row, state.metodePajakGlobal);
         const residentStatus = parseResidentStatus(row);
+        const counterpartTinRaw = bacaString(row, 'Counterpart TIN', 'CounterpartTin');
+        const counterpartTin = counterpartTinRaw
+          ? sanitizeFixedDigits(counterpartTinRaw, 16)
+          : nik;
+        if (counterpartTinRaw && !counterpartTin) {
+          validationErrors.push(
+            `Baris ${excelRowNumber}: Counterpart TIN harus tepat 16 digit angka.`
+          );
+          return;
+        }
+
         const bulanMulai = clampMonth(row['Bln Mulai'], 1);
         const bulanSelesai = clampMonth(row['Bln Selesai'], 12);
         const bulanSelesaiFinal = bulanSelesai < bulanMulai ? bulanMulai : bulanSelesai;
@@ -531,8 +671,10 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           bulanMulai,
           bulanSelesai: bulanSelesaiFinal,
           jabatan: bacaString(row, 'Jabatan') || undefined,
-          counterpartTin: bacaString(row, 'Counterpart TIN') || nik,
+          counterpartTin: counterpartTin ?? nik,
           temporaryTin: bacaString(row, 'Temporary TIN') || undefined,
+          noPaspor: parseNoPaspor(row, residentStatus),
+          fasilitasPajak: parseFasilitasPajak(row),
           adaNPWP: statusIdentitas === 'NPWP' || statusIdentitas === 'NIK_VALID',
         };
 
@@ -573,6 +715,10 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
         empTemplate.monthlyHasils = calculateFullYear(empTemplate, state.configBpjs);
         newEmployees[nik] = empTemplate;
       });
+
+      if (validationErrors.length > 0) {
+        throw new Error(validationErrors.join('\n'));
+      }
 
       return { employees: newEmployees };
     }),

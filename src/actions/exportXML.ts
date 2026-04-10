@@ -1,23 +1,36 @@
 import { create } from 'xmlbuilder2';
+import type { XMLBuilder } from 'xmlbuilder2/lib/interfaces';
 import {
   DataKaryawan,
   DataPerusahaan,
+  FasilitasPajak,
   HasilKalkulasiTetap,
 } from '../types/payroll';
+
+const VALID_TAX_CERTIFICATES: readonly FasilitasPajak[] = [
+  'N/A',
+  'SKB',
+  'DTP',
+  'SKD',
+  'ETC',
+] as const;
 
 export interface DataExportBulanIni {
   karyawan: DataKaryawan;
   hasilKalkulasi: HasilKalkulasiTetap;
-  taxCertificate?: string;
-  taxObjectCode?: string;
   position?: string;
   counterpartPassport?: string | null;
 }
 
+export interface BpmpGlobalSettings {
+  taxPeriodMonth: number;
+  taxPeriodYear: number;
+  withholdingDate?: string | Date;
+  strict?: boolean;
+}
+
 export interface GenerateMmPayrollOptions {
   withholdingDate?: string | Date;
-  defaultTaxCertificate?: string;
-  defaultTaxObjectCode?: string;
   strict?: boolean;
 }
 
@@ -28,11 +41,53 @@ function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function resolveWithholdingDate(
-  withholdingDate?: string | Date
+function sanitizeDigits(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\D/g, '');
+}
+
+function validateFixedDigits(
+  value: unknown,
+  length: number,
+  label: string
 ): string {
+  const digits = sanitizeDigits(value);
+  if (digits.length !== length) {
+    throw new Error(`${label} harus tepat ${length} digit angka.`);
+  }
+  return digits;
+}
+
+function isValidIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
+  const [yearText, monthText, dayText] = value.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return false;
+  }
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() + 1 === month &&
+    parsed.getUTCDate() === day
+  );
+}
+
+function resolveWithholdingDate(withholdingDate?: string | Date): string {
   if (typeof withholdingDate === 'string' && withholdingDate.trim() !== '') {
-    return withholdingDate.trim();
+    const normalized = withholdingDate.trim();
+    if (!isValidIsoDate(normalized)) {
+      throw new Error(
+        'WithholdingDate harus berformat YYYY-MM-DD dan merupakan tanggal yang valid.'
+      );
+    }
+    return normalized;
   }
 
   if (withholdingDate instanceof Date && !Number.isNaN(withholdingDate.getTime())) {
@@ -48,35 +103,59 @@ function trimTrailingZeros(value: number): string {
   return normalized === '' ? '0' : normalized;
 }
 
-function resolveCounterpartOpt(karyawan: DataKaryawan): 'Resident' | 'NonResident' {
-  return karyawan.residentStatus === 'NON_RESIDENT' ? 'NonResident' : 'Resident';
+function resolveCounterpartOpt(
+  karyawan: DataKaryawan
+): 'Resident' | 'Non-Resident' {
+  return karyawan.residentStatus === 'NON_RESIDENT'
+    ? 'Non-Resident'
+    : 'Resident';
 }
 
 function resolveCounterpartTin(karyawan: DataKaryawan): string {
-  return (
-    karyawan.counterpartTin?.trim() ||
-    karyawan.temporaryTin?.trim() ||
-    karyawan.nik?.trim() ||
-    ''
-  );
+  const raw = karyawan.counterpartTin?.trim() || karyawan.nik?.trim() || '';
+  return validateFixedDigits(raw, 16, `CounterpartTin ${karyawan.namaLengkap}`);
+}
+
+function resolveCounterpartPassport(record: DataExportBulanIni): string | null {
+  const raw = record.counterpartPassport ?? record.karyawan.noPaspor;
+  const normalized = String(raw ?? '').trim();
+  return normalized === '' ? null : normalized;
 }
 
 function resolvePosition(record: DataExportBulanIni): string {
   return record.position?.trim() || record.karyawan.jabatan?.trim() || 'Pegawai';
 }
 
-function resolveTaxCertificate(
-  record: DataExportBulanIni,
-  options: GenerateMmPayrollOptions
-): string {
-  return record.taxCertificate?.trim() || options.defaultTaxCertificate || 'N/A';
+function resolveTaxCertificate(karyawan: DataKaryawan): FasilitasPajak {
+  const raw = String(karyawan.fasilitasPajak ?? 'N/A').trim().toUpperCase();
+  if ((VALID_TAX_CERTIFICATES as readonly string[]).includes(raw)) {
+    return raw as FasilitasPajak;
+  }
+  return 'N/A';
 }
 
-function resolveTaxObjectCode(
-  record: DataExportBulanIni,
-  options: GenerateMmPayrollOptions
-): string {
-  return record.taxObjectCode?.trim() || options.defaultTaxObjectCode || '21-100-01';
+function resolveTaxObjectCode(karyawan: DataKaryawan): string {
+  if (karyawan.residentStatus === 'NON_RESIDENT') {
+    return '26-100-99';
+  }
+
+  if (karyawan.tipeKaryawan === 'NON_PEGAWAI') {
+    return '21-100-07';
+  }
+
+  return '21-100-01';
+}
+
+function resolveStatusTaxExemption(karyawan: DataKaryawan): string | null {
+  const normalized = karyawan.statusPtkp?.trim();
+  if (!normalized || normalized === '-') {
+    return null;
+  }
+  return normalized;
+}
+
+function resolveGross(hasilKalkulasi: HasilKalkulasiTetap): string {
+  return String(Math.max(0, Math.floor(hasilKalkulasi.totalBruto)));
 }
 
 function resolveRatePercent(hasilKalkulasi: HasilKalkulasiTetap): string {
@@ -93,26 +172,60 @@ function resolveRatePercent(hasilKalkulasi: HasilKalkulasiTetap): string {
   return '0';
 }
 
-function validateRecord(record: DataExportBulanIni): string[] {
-  const issues: string[] = [];
+function validateHeader(
+  perusahaan: DataPerusahaan,
+  settings: BpmpGlobalSettings
+): {
+  tin: string;
+  idPlaceOfBusinessActivity: string;
+  withholdingDate: string;
+} {
+  const tin = validateFixedDigits(perusahaan.npwpPemotong, 16, 'TIN perusahaan');
+  const idPlaceOfBusinessActivity = validateFixedDigits(
+    perusahaan.idTku,
+    22,
+    'IDPlaceOfBusinessActivity'
+  );
 
-  if (record.karyawan.tipeKaryawan !== 'TETAP') {
-    issues.push(`pegawai ${record.karyawan.namaLengkap} bukan tipe TETAP`);
-  }
-
-  if (!record.karyawan.nik?.trim()) {
-    issues.push(`pegawai ${record.karyawan.namaLengkap} tidak memiliki NIK`);
-  }
-
-  if (!resolveCounterpartTin(record.karyawan)) {
-    issues.push(`pegawai ${record.karyawan.namaLengkap} tidak memiliki CounterpartTin`);
+  if (
+    !Number.isInteger(settings.taxPeriodMonth) ||
+    settings.taxPeriodMonth < 1 ||
+    settings.taxPeriodMonth > 12
+  ) {
+    throw new Error(`TaxPeriodMonth tidak valid: ${settings.taxPeriodMonth}`);
   }
 
   if (
-    record.karyawan.residentStatus === 'RESIDENT' &&
-    (!record.karyawan.statusPtkp || record.karyawan.statusPtkp === '-')
+    !Number.isInteger(settings.taxPeriodYear) ||
+    settings.taxPeriodYear < 2000 ||
+    settings.taxPeriodYear > 9999
   ) {
-    issues.push(`pegawai ${record.karyawan.namaLengkap} belum memiliki status PTKP valid`);
+    throw new Error(`TaxPeriodYear tidak valid: ${settings.taxPeriodYear}`);
+  }
+
+  const withholdingDate = resolveWithholdingDate(settings.withholdingDate);
+
+  return {
+    tin,
+    idPlaceOfBusinessActivity,
+    withholdingDate,
+  };
+}
+
+function validateRecord(record: DataExportBulanIni): string[] {
+  const issues: string[] = [];
+
+  try {
+    resolveCounterpartTin(record.karyawan);
+  } catch (error) {
+    issues.push(error instanceof Error ? error.message : 'CounterpartTin tidak valid');
+  }
+
+  const taxCertificate = resolveTaxCertificate(record.karyawan);
+  if (!(VALID_TAX_CERTIFICATES as readonly string[]).includes(taxCertificate)) {
+    issues.push(
+      `pegawai ${record.karyawan.namaLengkap} memiliki fasilitasPajak tidak valid`
+    );
   }
 
   if (record.hasilKalkulasi.totalBruto < 0) {
@@ -122,64 +235,50 @@ function validateRecord(record: DataExportBulanIni): string[] {
   return issues;
 }
 
-function validateHeader(
-  perusahaan: DataPerusahaan,
-  masaPajakBulan: number,
-  masaPajakTahun: number
-): void {
-  if (!perusahaan.npwpPemotong?.trim()) {
-    throw new Error('NPWP/TIN pemotong wajib diisi.');
-  }
-
-  if (!perusahaan.idTku?.trim()) {
-    throw new Error('ID TKU wajib diisi.');
-  }
-
-  if (masaPajakBulan < 1 || masaPajakBulan > 12) {
-    throw new Error(`Masa pajak bulan tidak valid: ${masaPajakBulan}`);
-  }
-
-  if (masaPajakTahun < 2000 || masaPajakTahun > 9999) {
-    throw new Error(`Masa pajak tahun tidak valid: ${masaPajakTahun}`);
-  }
-}
-
 function appendCounterpartPassport(
-  mmPayroll: any,
-  passport: string | null | undefined
+  mmPayroll: XMLBuilder,
+  passport: string | null
 ): void {
-  if (passport && passport.trim() !== '') {
-    mmPayroll.ele('CounterpartPassport').txt(passport.trim()).up();
+  if (passport) {
+    mmPayroll.ele('CounterpartPassport').txt(passport).up();
     return;
   }
 
   mmPayroll.ele('CounterpartPassport', { 'xsi:nil': 'true' }).up();
 }
 
-// ============================================================================
-// FUNGSI UTAMA: GENERATE XML CORETAX BPMP (Format: MmPayrollBulk)
-// ============================================================================
-export function generateCoretaxXML(
+function appendStatusTaxExemption(
+  mmPayroll: XMLBuilder,
+  statusTaxExemption: string | null
+): void {
+  if (statusTaxExemption) {
+    mmPayroll.ele('StatusTaxExemption').txt(statusTaxExemption).up();
+    return;
+  }
+
+  mmPayroll.ele('StatusTaxExemption', { 'xsi:nil': 'true' }).up();
+}
+
+export function generateBpmpXml(
   perusahaan: DataPerusahaan,
-  masaPajakBulan: number,
-  masaPajakTahun: number,
-  dataPegawaiTetap: DataExportBulanIni[],
-  options: GenerateMmPayrollOptions = {}
+  dataKaryawan: DataExportBulanIni[],
+  settings: BpmpGlobalSettings
 ): string {
-  validateHeader(perusahaan, masaPajakBulan, masaPajakTahun);
+  const strict = settings.strict ?? true;
+  const header = validateHeader(perusahaan, settings);
 
-  const strict = options.strict ?? true;
-  const withholdingDate = resolveWithholdingDate(options.withholdingDate);
+  const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(
+    'MmPayrollBulk',
+    {
+      'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+    }
+  );
 
-  const root = create({ version: '1.0', encoding: 'UTF-8' }).ele('MmPayrollBulk', {
-    'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-  });
-
-  root.ele('TIN').txt(perusahaan.npwpPemotong.trim()).up();
+  root.ele('TIN').txt(header.tin).up();
 
   const listOfMmPayroll = root.ele('ListOfMmPayroll');
 
-  dataPegawaiTetap.forEach((record) => {
+  dataKaryawan.forEach((record) => {
     const issues = validateRecord(record);
     if (issues.length > 0) {
       const message = issues.join('; ');
@@ -191,33 +290,64 @@ export function generateCoretaxXML(
     }
 
     const { karyawan, hasilKalkulasi } = record;
+    const counterpartPassport = resolveCounterpartPassport(record);
+    const counterpartTin = resolveCounterpartTin(karyawan);
+    const statusTaxExemption = resolveStatusTaxExemption(karyawan);
+    const position = resolvePosition(record);
+    const taxCertificate = resolveTaxCertificate(karyawan);
+    const taxObjectCode = resolveTaxObjectCode(karyawan);
+    const gross = resolveGross(hasilKalkulasi);
+    const rate = resolveRatePercent(hasilKalkulasi);
     const mmPayroll = listOfMmPayroll.ele('MmPayroll');
 
-    mmPayroll.ele('TaxPeriodMonth').txt(String(masaPajakBulan)).up();
-    mmPayroll.ele('TaxPeriodYear').txt(String(masaPajakTahun)).up();
+    mmPayroll.ele('TaxPeriodMonth').txt(String(settings.taxPeriodMonth)).up();
+    mmPayroll.ele('TaxPeriodYear').txt(String(settings.taxPeriodYear)).up();
     mmPayroll.ele('CounterpartOpt').txt(resolveCounterpartOpt(karyawan)).up();
-
-    appendCounterpartPassport(mmPayroll, record.counterpartPassport);
-
-    mmPayroll.ele('CounterpartTin').txt(resolveCounterpartTin(karyawan)).up();
-
-    if (karyawan.statusPtkp && karyawan.statusPtkp !== '-') {
-      mmPayroll.ele('StatusTaxExemption').txt(karyawan.statusPtkp).up();
-    } else {
-      mmPayroll.ele('StatusTaxExemption', { 'xsi:nil': 'true' }).up();
-    }
-
-    mmPayroll.ele('Position').txt(resolvePosition(record)).up();
-    mmPayroll.ele('TaxCertificate').txt(resolveTaxCertificate(record, options)).up();
-    mmPayroll.ele('TaxObjectCode').txt(resolveTaxObjectCode(record, options)).up();
-    mmPayroll.ele('Gross').txt(String(Math.max(0, Math.floor(hasilKalkulasi.totalBruto)))).up();
-    mmPayroll.ele('Rate').txt(resolveRatePercent(hasilKalkulasi)).up();
-    mmPayroll.ele('IDPlaceOfBusinessActivity').txt(perusahaan.idTku.trim()).up();
-    mmPayroll.ele('WithholdingDate').txt(withholdingDate).up();
+    appendCounterpartPassport(mmPayroll, counterpartPassport);
+    mmPayroll.ele('CounterpartTin').txt(counterpartTin).up();
+    appendStatusTaxExemption(mmPayroll, statusTaxExemption);
+    mmPayroll.ele('Position').txt(position).up();
+    mmPayroll.ele('TaxCertificate').txt(taxCertificate).up();
+    mmPayroll.ele('TaxObjectCode').txt(taxObjectCode).up();
+    mmPayroll.ele('Gross').txt(gross).up();
+    mmPayroll.ele('Rate').txt(rate).up();
+    mmPayroll
+      .ele('IDPlaceOfBusinessActivity')
+      .txt(header.idPlaceOfBusinessActivity)
+      .up();
+    mmPayroll.ele('WithholdingDate').txt(header.withholdingDate).up();
     mmPayroll.up();
   });
 
   return root.end({ prettyPrint: true });
+}
+
+export function generateCoretaxXML(
+  perusahaan: DataPerusahaan,
+  masaPajakBulan: number,
+  masaPajakTahun: number,
+  dataKaryawan: DataExportBulanIni[],
+  options: GenerateMmPayrollOptions = {}
+): string {
+  return generateBpmpXml(perusahaan, dataKaryawan, {
+    taxPeriodMonth: masaPajakBulan,
+    taxPeriodYear: masaPajakTahun,
+    withholdingDate: options.withholdingDate,
+    strict: options.strict,
+  });
+}
+
+export function downloadBpmpXml(
+  xml: string,
+  filename = 'BPMP_Coretax.xml'
+): void {
+  const blob = new Blob([xml], { type: 'text/xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export const generateMmPayrollBulkXML = generateCoretaxXML;

@@ -29,6 +29,8 @@ export type KategoriTER = 'A' | 'B' | 'C';
 
 export type PasalPemotongan = 'PPh21' | 'PPh26';
 
+export type FasilitasPajak = 'N/A' | 'SKB' | 'DTP' | 'SKD' | 'ETC';
+
 export type BasisUpahBpjs =
   | 'GAJI_POKOK'
   | 'GAJI_POKOK_PLUS_TUNJANGAN_TETAP';
@@ -87,6 +89,8 @@ export interface DataKaryawan {
   jabatan?: string;
   counterpartTin?: string;
   temporaryTin?: string;
+  noPaspor: string | null;
+  fasilitasPajak: FasilitasPajak;
 
   // Legacy bridge agar migrasi file lain bisa bertahap
   adaNPWP?: boolean;
