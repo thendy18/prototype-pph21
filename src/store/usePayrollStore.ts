@@ -2,8 +2,10 @@ import { create } from 'zustand';
 import {
   DataKaryawan,
   FasilitasPajak,
+  HasilKalkulasiNonPegawai,
   HasilKalkulasiTetap,
   InputGajiBulanan,
+  InputNonPegawai,
   KonfigurasiTarif,
   MetodePajak,
   OverrideBpjsKaryawan,
@@ -56,11 +58,9 @@ type UpdateVariablePayload = {
 interface PayrollStore {
   configBpjs: KonfigurasiTarif;
   employees: Record<string, EmployeeData>;
-  metodePajakGlobal: MetodePajak;
 
   resetStore: () => void;
   setConfigBpjs: (newConfig: Partial<KonfigurasiTarif>) => void;
-  setMetodePajakGlobal: (metode: MetodePajak) => void;
   loadDefaultBpjs: () => void;
   importExcel: (rows: Record<string, unknown>[]) => void;
   updateVariable: (
@@ -82,6 +82,12 @@ const FASILITAS_PAJAK_KEYS = [
   'Fasilitas Pajak',
   'Tax Certificate',
   'TaxCertificate',
+] as const;
+
+const METODE_PAJAK_KEYS = [
+  'Metode Pajak',
+  'Metode',
+  'Tax Method',
 ] as const;
 
 function coerceCellToString(value: unknown): string {
@@ -204,15 +210,12 @@ function parseStatusIdentitas(row: Record<string, unknown>): StatusIdentitasPaja
   return 'NPWP';
 }
 
-function parseMetodePajak(
-  row: Record<string, unknown>,
-  fallback: MetodePajak
-): MetodePajak {
-  const raw = bacaString(row, 'Metode Pajak', 'Metode', 'Tax Method').toUpperCase();
+function parseMetodePajak(value: unknown): MetodePajak | null {
+  const raw = coerceCellToString(value).toUpperCase();
   if (raw === 'NET') return 'NET';
-  if (raw === 'GROSS_UP' || raw === 'GROSS UP') return 'GROSS_UP';
+  if (raw === 'GROSS_UP') return 'GROSS_UP';
   if (raw === 'GROSS') return 'GROSS';
-  return fallback;
+  return null;
 }
 
 function parseResidentStatus(row: Record<string, unknown>): ResidentStatus {
@@ -327,7 +330,7 @@ function buildEmptyResult(
 function mapNonPegawaiResult(
   karyawan: DataKaryawan,
   input: InputGajiBulanan,
-  hasil: any
+  hasil: HasilKalkulasiNonPegawai
 ): HasilKalkulasiTetap {
   const totalPendapatan =
     input.gajiPokok +
@@ -486,13 +489,14 @@ function calculateFullYear(
         inp.thrAtauBonus +
         inp.naturaTaxable;
 
-      const hasilNP = hitungPajakNonPegawai({
+      const inputNonPegawai: InputNonPegawai = {
         totalPendapatan,
         statusIdentitas: emp.karyawan.statusIdentitas,
         residentStatus: emp.karyawan.residentStatus,
         metodePajak: emp.karyawan.metodePajak,
         adaNPWP: emp.karyawan.adaNPWP,
-      } as any);
+      };
+      const hasilNP = hitungPajakNonPegawai(inputNonPegawai);
 
       newHasils[bulan] = mapNonPegawaiResult(emp.karyawan, inp, hasilNP);
     }
@@ -548,7 +552,6 @@ function createInitialStoreState() {
   return {
     configBpjs: createEmptyBpjsConfig(),
     employees: {} as Record<string, EmployeeData>,
-    metodePajakGlobal: 'GROSS' as MetodePajak,
   };
 }
 
@@ -558,28 +561,6 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
   resetStore: () => set(createInitialStoreState()),
 
   loadDefaultBpjs: () => get().setConfigBpjs({ ...DEFAULT_TARIF_BPJS }),
-
-  setMetodePajakGlobal: (metode) =>
-    set((state) => {
-      const updatedEmployees = Object.fromEntries(
-        Object.entries(state.employees).map(([nik, emp]) => {
-          const updatedEmp: EmployeeData = {
-            ...emp,
-            karyawan: {
-              ...emp.karyawan,
-              metodePajak: metode,
-            },
-          };
-
-          return [nik, { ...updatedEmp, monthlyHasils: calculateFullYear(updatedEmp, state.configBpjs) }];
-        })
-      );
-
-      return {
-        metodePajakGlobal: metode,
-        employees: updatedEmployees,
-      };
-    }),
 
   setConfigBpjs: (newConfig) =>
     set((state) => {
@@ -635,7 +616,22 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
 
         const tipeKaryawan = parseTipeKaryawan(row);
         const statusIdentitas = parseStatusIdentitas(row);
-        const metodePajak = parseMetodePajak(row, state.metodePajakGlobal);
+        const metodePajakRaw = bacaString(row, ...METODE_PAJAK_KEYS);
+        if (!metodePajakRaw) {
+          validationErrors.push(
+            `Baris ${excelRowNumber}: Metode Pajak wajib diisi.`
+          );
+          return;
+        }
+
+        const metodePajak = parseMetodePajak(metodePajakRaw);
+        if (!metodePajak) {
+          validationErrors.push(
+            `Baris ${excelRowNumber}: Metode Pajak harus salah satu dari GROSS, NET, atau GROSS_UP.`
+          );
+          return;
+        }
+
         const residentStatus = parseResidentStatus(row);
         const counterpartTinRaw = bacaString(row, 'Counterpart TIN', 'CounterpartTin');
         const counterpartTin = counterpartTinRaw

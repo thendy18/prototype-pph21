@@ -113,11 +113,9 @@ export interface KomponenBpjsKaryawan {
   iuranJp: number;
 }
 
-export interface OverrideBpjsPerusahaan
-  extends Partial<KomponenBpjsPerusahaan> {}
+export type OverrideBpjsPerusahaan = Partial<KomponenBpjsPerusahaan>;
 
-export interface OverrideBpjsKaryawan
-  extends Partial<KomponenBpjsKaryawan> {}
+export type OverrideBpjsKaryawan = Partial<KomponenBpjsKaryawan>;
 
 // ============================================================================
 // 5. INPUT BULANAN DARI USER / EXCEL / UI

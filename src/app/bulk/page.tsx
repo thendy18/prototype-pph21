@@ -12,7 +12,7 @@ import {
   downloadSlipGajiPdf,
 } from '../../actions/exportSlipGaji';
 import { usePayrollStore } from '../../store/usePayrollStore';
-import { DataPerusahaan, KonfigurasiTarif, MetodePajak } from '../../types/payroll';
+import { DataPerusahaan, KonfigurasiTarif } from '../../types/payroll';
 import { SlipGajiSource } from '../../types/slipGaji';
 
 const RATE_KEYS = [
@@ -25,8 +25,6 @@ const RATE_KEYS = [
   'rateBpjsKesKaryawan',
   'rateJpKaryawan',
 ] as const;
-
-const METHODS: MetodePajak[] = ['GROSS', 'NET', 'GROSS_UP'];
 
 function formatCurrency(value: number): string {
   return value.toLocaleString('id-ID');
@@ -69,8 +67,6 @@ export default function PayrollProPage() {
     employees,
     importExcel,
     updateVariable,
-    metodePajakGlobal,
-    setMetodePajakGlobal,
   } = usePayrollStore();
 
   const [masaPajak, setMasaPajak] = useState(10);
@@ -262,17 +258,6 @@ export default function PayrollProPage() {
               <p className="text-xs text-slate-500">BPJS, PPh 21/26, audit log, dan export BPMP</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {METHODS.map((method) => (
-                <button
-                  key={method}
-                  onClick={() => setMetodePajakGlobal(method)}
-                  className={`rounded-xl px-4 py-2 text-xs font-black ${
-                    metodePajakGlobal === method ? 'bg-indigo-600 text-white' : 'bg-slate-950 text-slate-400'
-                  }`}
-                >
-                  {method === 'GROSS_UP' ? 'GROSS UP' : method}
-                </button>
-              ))}
               <button
                 onClick={loadDefaultBpjs}
                 className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-bold"
@@ -371,7 +356,7 @@ export default function PayrollProPage() {
           <div className="flex items-center justify-between rounded-2xl bg-indigo-600 p-6 lg:col-span-2">
             <div>
               <h2 className="text-xl font-black">Upload Excel</h2>
-              <p className="text-xs text-indigo-100">Format import baru tetap didukung bersama format lama</p>
+              <p className="text-xs text-indigo-100">Kolom Metode Pajak wajib ada per karyawan di file Excel</p>
             </div>
             <input type="file" accept=".xlsx,.xls" onChange={handleExcel} className="text-xs file:rounded-lg file:border-0 file:bg-white file:px-4 file:py-2 file:font-black file:text-indigo-600" />
           </div>
