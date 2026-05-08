@@ -17,6 +17,10 @@ import {
 
 import { hitungKomponenBpjs } from './bpjsCalculator';
 import { floorDecimalProduct } from './decimalMath';
+import {
+  applyNominalOverrides,
+  buildNominalOverrideAuditLogs,
+} from './payrollOverrides';
 
 const RATE_PPH_26_NON_RESIDENT = 0.2;
 const MAX_ITERASI_GROSS_UP = 50;
@@ -173,6 +177,7 @@ export function hitungPajakBulanan(
 ): HasilKalkulasiTetap {
   const log: LogAudit[] = [];
   const statusIdentitas = normalisasiStatusIdentitas(karyawan);
+  const effectiveInput = applyNominalOverrides(input);
 
   log.push({
     langkah: '1',
@@ -180,14 +185,15 @@ export function hitungPajakBulanan(
     nilai: `${karyawan.metodePajak} | ${karyawan.residentStatus} | ${statusIdentitas}`,
     rumus: `PTKP ${karyawan.statusPtkp}`,
   });
+  log.push(...buildNominalOverrideAuditLogs(input, karyawan.tipeKaryawan));
 
   const hasilBpjs = hitungKomponenBpjs({
-    gajiPokok: input.gajiPokok,
-    tunjanganTetap: input.tunjanganTetap,
-    dasarUpahBpjs: input.dasarUpahBpjs,
-    konfigurasiTarif: input.konfigurasiTarif,
-    overrideBpjsPerusahaan: input.overrideBpjsPerusahaan,
-    overrideBpjsKaryawan: input.overrideBpjsKaryawan,
+    gajiPokok: effectiveInput.gajiPokok,
+    tunjanganTetap: effectiveInput.tunjanganTetap,
+    dasarUpahBpjs: effectiveInput.dasarUpahBpjs,
+    konfigurasiTarif: effectiveInput.konfigurasiTarif,
+    overrideBpjsPerusahaan: effectiveInput.overrideBpjsPerusahaan,
+    overrideBpjsKaryawan: effectiveInput.overrideBpjsKaryawan,
   });
 
   const bpjsPerusahaan = hasilBpjs.perusahaan;
@@ -197,9 +203,9 @@ export function hitungPajakBulanan(
     langkah: '2',
     deskripsi: 'Menentukan dasar upah BPJS',
     nilai: bpjsPerusahaan.dasarUpahBpjs,
-    rumus: input.dasarUpahBpjs !== undefined
+    rumus: effectiveInput.dasarUpahBpjs !== undefined
       ? `Override dasar upah BPJS = ${bpjsPerusahaan.dasarUpahBpjs}`
-      : `Gaji Pokok (${input.gajiPokok}) + Tunjangan Tetap (${input.tunjanganTetap})`,
+      : `Gaji Pokok (${effectiveInput.gajiPokok}) + Tunjangan Tetap (${effectiveInput.tunjanganTetap})`,
   });
 
   log.push({
@@ -222,17 +228,17 @@ export function hitungPajakBulanan(
   });
 
   const totalGajiTunjangan =
-    floorRupiah(input.gajiPokok) +
-    floorRupiah(input.tunjanganTetap) +
-    floorRupiah(input.tunjanganVariabel);
+    floorRupiah(effectiveInput.gajiPokok) +
+    floorRupiah(effectiveInput.tunjanganTetap) +
+    floorRupiah(effectiveInput.tunjanganVariabel);
 
   const totalPenghasilanCash =
-    totalGajiTunjangan + floorRupiah(input.thrAtauBonus);
+    totalGajiTunjangan + floorRupiah(effectiveInput.thrAtauBonus);
 
   const totalPenambahBrutoPajak =
     bpjsPerusahaan.totalPenambahBrutoPajak +
-    floorRupiah(input.naturaTaxable) +
-    floorRupiah(input.premiAsuransiSwastaPerusahaan);
+    floorRupiah(effectiveInput.naturaTaxable) +
+    floorRupiah(effectiveInput.premiAsuransiSwastaPerusahaan);
 
   const baseBrutoPajak = totalPenghasilanCash + totalPenambahBrutoPajak;
 
@@ -241,8 +247,8 @@ export function hitungPajakBulanan(
     deskripsi: 'Menghitung bruto pajak dasar',
     nilai: baseBrutoPajak,
     rumus:
-      `Cash (${totalPenghasilanCash}) + Natura (${input.naturaTaxable}) + ` +
-      `Asuransi Swasta ER (${input.premiAsuransiSwastaPerusahaan}) + ` +
+      `Cash (${totalPenghasilanCash}) + Natura (${effectiveInput.naturaTaxable}) + ` +
+      `Asuransi Swasta ER (${effectiveInput.premiAsuransiSwastaPerusahaan}) + ` +
       `Penambah Bruto BPJS (${bpjsPerusahaan.totalPenambahBrutoPajak})`,
   });
 
@@ -320,8 +326,8 @@ export function hitungPajakBulanan(
   const totalPenghasilanCashFinal = totalPenghasilanCash + tunjanganPajakGrossUp;
   const totalIuranCashKaryawan =
     bpjsKaryawan.totalPotonganCash +
-    floorRupiah(input.dplkKaryawan) +
-    floorRupiah(input.zakat);
+    floorRupiah(effectiveInput.dplkKaryawan) +
+    floorRupiah(effectiveInput.zakat);
 
   const pajakDipotongDariKaryawan = karyawan.metodePajak === 'NET' ? 0 : pajakTerutang;
   const pajakDitanggungPerusahaan = karyawan.metodePajak === 'NET' ? pajakTerutang : 0;
@@ -344,9 +350,9 @@ export function hitungPajakBulanan(
     isMasaPajakTerakhir: false,
     totalGajiTunjangan,
     totalPenghasilanCash: totalPenghasilanCashFinal,
-    thrAtauBonus: input.thrAtauBonus,
-    naturaTaxable: input.naturaTaxable,
-    premiAsuransiSwastaPerusahaan: input.premiAsuransiSwastaPerusahaan,
+    thrAtauBonus: effectiveInput.thrAtauBonus,
+    naturaTaxable: effectiveInput.naturaTaxable,
+    premiAsuransiSwastaPerusahaan: effectiveInput.premiAsuransiSwastaPerusahaan,
     dasarUpahBpjs: bpjsPerusahaan.dasarUpahBpjs,
 
     premiJkkPerusahaan: bpjsPerusahaan.premiJkk,
@@ -362,13 +368,13 @@ export function hitungPajakBulanan(
     iuranJhtKaryawan: bpjsKaryawan.iuranJht,
     iuranJpKaryawan: bpjsKaryawan.iuranJp,
     iuranBpjsKesKaryawan: bpjsKaryawan.iuranBpjsKes,
-    potonganDplkKaryawan: input.dplkKaryawan,
-    potonganZakat: input.zakat,
+    potonganDplkKaryawan: effectiveInput.dplkKaryawan,
+    potonganZakat: effectiveInput.zakat,
     totalIuranCashKaryawan,
     totalPengurangPajak:
       bpjsKaryawan.totalPengurangPajak +
-      floorRupiah(input.dplkKaryawan) +
-      floorRupiah(input.zakat),
+      floorRupiah(effectiveInput.dplkKaryawan) +
+      floorRupiah(effectiveInput.zakat),
 
     kategoriTER,
     rateTER,

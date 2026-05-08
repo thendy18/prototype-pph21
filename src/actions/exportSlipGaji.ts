@@ -2,6 +2,7 @@ import { pdf, type DocumentProps } from '@react-pdf/renderer';
 import JSZip from 'jszip';
 import { createElement, type ReactElement } from 'react';
 import SlipGajiDocument from '../components/slip/SlipGajiDocument';
+import { applyNominalOverrides } from '../lib/payrollOverrides';
 import { SlipGajiLineItem, SlipGajiPayload, SlipGajiSource } from '../types/slipGaji';
 
 function formatPeriodLabel(month: number, year: number): string {
@@ -40,7 +41,8 @@ function pushLineItem(
 }
 
 export function buildSlipGajiPayload(source: SlipGajiSource): SlipGajiPayload {
-  const { namaPerusahaan, bulan, tahun, karyawan, input, hasil } = source;
+  const { namaPerusahaan, bulan, tahun, karyawan, hasil } = source;
+  const input = applyNominalOverrides(source.input);
 
   if (karyawan.tipeKaryawan !== 'TETAP') {
     throw new Error(`Slip gaji PDF hanya tersedia untuk pegawai TETAP: ${karyawan.namaLengkap}`);

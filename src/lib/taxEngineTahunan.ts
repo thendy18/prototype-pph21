@@ -15,6 +15,7 @@ import {
 } from './constants';
 
 import { floorDecimalProduct } from './decimalMath';
+import { buildNominalOverrideAuditLogs } from './payrollOverrides';
 import { hitungPajakBulanan } from './taxEngineBulanan';
 
 const MAX_ITERASI_GROSS_UP_TAHUNAN = 50;
@@ -342,6 +343,15 @@ export function hitungPenyesuaianDesember(
       rumus: `Bulan aktif ${karyawan.bulanMulai} s.d. ${karyawan.bulanSelesai}`,
     },
   ];
+
+  const overrideLogs = activeInputs.flatMap((item) =>
+    buildNominalOverrideAuditLogs(item, karyawan.tipeKaryawan).map((entry, index) => ({
+      ...entry,
+      langkah: `OVR-${item.bulan}-${index + 1}`,
+      deskripsi: `Bulan ${item.bulan}: ${entry.deskripsi}`,
+    }))
+  );
+  log.push(...overrideLogs);
 
   const hasilSebelumnya = inputSebelumnya.map((item) =>
     hitungPajakBulanan(karyawan, {

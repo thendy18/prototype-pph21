@@ -117,6 +117,28 @@ export type OverrideBpjsPerusahaan = Partial<KomponenBpjsPerusahaan>;
 
 export type OverrideBpjsKaryawan = Partial<KomponenBpjsKaryawan>;
 
+export type NominalOverrideKey =
+  | 'gajiPokok'
+  | 'tunjanganTetap'
+  | 'tunjanganVariabel'
+  | 'thrAtauBonus'
+  | 'naturaTaxable'
+  | 'premiAsuransiSwastaPerusahaan'
+  | 'dplkPerusahaan'
+  | 'dplkKaryawan'
+  | 'zakat'
+  | 'dasarUpahBpjs'
+  | 'premiJkkPerusahaan'
+  | 'premiJkmPerusahaan'
+  | 'premiJhtPerusahaan'
+  | 'premiBpjsKesPerusahaan'
+  | 'premiJpPerusahaan'
+  | 'iuranJhtKaryawan'
+  | 'iuranBpjsKesKaryawan'
+  | 'iuranJpKaryawan';
+
+export type NominalOverrideMap = Partial<Record<NominalOverrideKey, number>>;
+
 // ============================================================================
 // 5. INPUT BULANAN DARI USER / EXCEL / UI
 // ============================================================================
@@ -144,6 +166,7 @@ export interface InputGajiBulanan {
   // Metadata UI
   originalTunjangan?: number;
   isOverridden?: boolean;
+  nominalOverrides?: NominalOverrideMap;
 
   // Konfigurasi dinamis
   konfigurasiTarif: KonfigurasiTarif;

@@ -11,6 +11,7 @@ import {
   downloadAllSlipGajiZip,
   downloadSlipGajiPdf,
 } from '../../actions/exportSlipGaji';
+import { buildNominalOverridePreviewRows } from '../../lib/payrollOverrides';
 import { usePayrollStore } from '../../store/usePayrollStore';
 import { DataPerusahaan, KonfigurasiTarif } from '../../types/payroll';
 import { SlipGajiSource } from '../../types/slipGaji';
@@ -66,6 +67,7 @@ export default function PayrollProPage() {
     loadDefaultBpjs,
     employees,
     importExcel,
+    setNominalOverride,
     updateVariable,
   } = usePayrollStore();
 
@@ -94,6 +96,13 @@ export default function PayrollProPage() {
   const activeEmp = selectedNik ? employees[selectedNik] : null;
   const activeInput = activeEmp?.monthlyInputs[masaPajak];
   const activeResult = activeEmp?.monthlyHasils[masaPajak];
+  const activeOverrideRows = useMemo(
+    () =>
+      activeEmp && activeInput
+        ? buildNominalOverridePreviewRows(activeInput, activeEmp.karyawan.tipeKaryawan)
+        : [],
+    [activeEmp, activeInput]
+  );
   const availableTaxYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 7 }, (_, index) => currentYear - 2 + index);
@@ -613,176 +622,91 @@ export default function PayrollProPage() {
 
               <div className="space-y-8">
                 <section className="space-y-4">
-                  <h4 className="border-b border-amber-500/20 pb-2 text-[11px] font-black uppercase tracking-[0.2em] text-amber-400">
-                    Income Override
-                  </h4>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">Gaji Pokok</label>
-                      <input
-                        type="number"
-                        value={activeInput.gajiPokok}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { gajiPokok: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">
-                        Tunjangan Tetap
-                      </label>
-                      <input
-                        type="number"
-                        value={activeInput.tunjanganTetap}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { tunjanganTetap: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                      <p className="mt-2 text-[10px] text-slate-500">
-                        Original Excel: Rp {formatCurrency(activeInput.originalTunjangan ?? 0)}
+                  <div className="flex items-end justify-between gap-4 border-b border-amber-500/20 pb-2">
+                    <div>
+                      <h4 className="text-[11px] font-black uppercase tracking-[0.2em] text-amber-400">
+                        Global Nominal Override
+                      </h4>
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        Isi nominal manual untuk komponen yang ingin dikoreksi. Jika kolom override kosong,
+                        sistem tetap memakai nilai asli atau hitung otomatis.
                       </p>
                     </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">THR / Bonus</label>
-                      <input
-                        type="number"
-                        value={activeInput.thrAtauBonus || ''}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { bonus: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">Lembur / Variabel</label>
-                      <input
-                        type="number"
-                        value={activeInput.tunjanganVariabel || ''}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { lembur: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">Natura Taxable</label>
-                      <input
-                        type="number"
-                        value={activeInput.naturaTaxable || ''}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { naturaTaxable: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">
-                        Premi Asuransi Swasta ER
-                      </label>
-                      <input
-                        type="number"
-                        value={activeInput.premiAsuransiSwastaPerusahaan || ''}
-                        onChange={(e) =>
-                          updateVariable(activeEmp.karyawan.nik, masaPajak, {
-                            premiAsuransiSwastaPerusahaan: parseNumber(e.target.value),
-                          })
-                        }
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                    </div>
                   </div>
-                </section>
+                  <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-900/70 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                          <tr>
+                            <th className="p-3 text-left">Kelompok</th>
+                            <th className="p-3 text-left">Komponen</th>
+                            <th className="p-3 text-right">Nilai Awal / Auto</th>
+                            <th className="p-3 text-right">Override Nominal</th>
+                            <th className="p-3 text-right">Nilai Dipakai</th>
+                            <th className="p-3 text-center">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800">
+                          {activeOverrideRows.map((row) => {
+                            const isOverridden = row.overrideValue !== undefined;
 
-                <section className="space-y-4">
-                  <h4 className="border-b border-indigo-500/20 pb-2 text-[11px] font-black uppercase tracking-[0.2em] text-indigo-400">
-                    BPJS Override
-                  </h4>
-                  <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                    <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">Dasar Upah BPJS</label>
-                    <input
-                      type="number"
-                      placeholder="Kosong = auto"
-                      value={activeInput.dasarUpahBpjs ?? ''}
-                      onChange={(e) =>
-                        updateVariable(activeEmp.karyawan.nik, masaPajak, {
-                          dasarUpahBpjs: parseNullableNumber(e.target.value),
-                        })
-                      }
-                      className="w-full bg-transparent text-lg outline-none"
-                    />
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <h5 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Override Perusahaan</h5>
-                      <div className="space-y-3">
-                        {[
-                          ['premiJkk', 'JKK'],
-                          ['premiJkm', 'JKM'],
-                          ['premiJht', 'JHT'],
-                          ['premiBpjsKes', 'BPJS Kes'],
-                          ['premiJp', 'JP'],
-                        ].map(([key, label]) => (
-                          <div key={key} className="flex items-center gap-3">
-                            <span className="w-24 text-[11px] font-bold text-slate-500">{label}</span>
-                            <input
-                              type="number"
-                              placeholder="Auto"
-                              value={(activeInput.overrideBpjsPerusahaan?.[key as keyof NonNullable<typeof activeInput.overrideBpjsPerusahaan>] as number | undefined) ?? ''}
-                              onChange={(e) =>
-                                updateVariable(activeEmp.karyawan.nik, masaPajak, {
-                                  overrideBpjsPerusahaan: { [key]: parseNullableNumber(e.target.value) },
-                                })
-                              }
-                              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <h5 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">Override Karyawan</h5>
-                      <div className="space-y-3">
-                        {[
-                          ['iuranJht', 'JHT'],
-                          ['iuranBpjsKes', 'BPJS Kes'],
-                          ['iuranJp', 'JP'],
-                        ].map(([key, label]) => (
-                          <div key={key} className="flex items-center gap-3">
-                            <span className="w-24 text-[11px] font-bold text-slate-500">{label}</span>
-                            <input
-                              type="number"
-                              placeholder="Auto"
-                              value={(activeInput.overrideBpjsKaryawan?.[key as keyof NonNullable<typeof activeInput.overrideBpjsKaryawan>] as number | undefined) ?? ''}
-                              onChange={(e) =>
-                                updateVariable(activeEmp.karyawan.nik, masaPajak, {
-                                  overrideBpjsKaryawan: { [key]: parseNullableNumber(e.target.value) },
-                                })
-                              }
-                              className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm outline-none"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="space-y-4">
-                  <h4 className="border-b border-emerald-500/20 pb-2 text-[11px] font-black uppercase tracking-[0.2em] text-emerald-400">
-                    Personal Adjustments
-                  </h4>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">DPLK Karyawan</label>
-                      <input
-                        type="number"
-                        value={activeInput.dplkKaryawan || ''}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { dplk: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
-                    </div>
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                      <label className="mb-2 block text-[10px] font-bold uppercase text-slate-500">Zakat Profesi</label>
-                      <input
-                        type="number"
-                        value={activeInput.zakat || ''}
-                        onChange={(e) => updateVariable(activeEmp.karyawan.nik, masaPajak, { zakat: parseNumber(e.target.value) })}
-                        className="w-full bg-transparent text-lg outline-none"
-                      />
+                            return (
+                              <tr
+                                key={row.key}
+                                className={isOverridden ? 'bg-amber-500/5' : undefined}
+                              >
+                                <td className="p-3 text-[11px] font-bold text-slate-500">
+                                  {row.group}
+                                </td>
+                                <td className="p-3 text-[12px] text-slate-200">{row.label}</td>
+                                <td className="p-3 text-right font-bold text-slate-400">
+                                  Rp {formatCurrency(row.originalValue)}
+                                </td>
+                                <td className="p-3">
+                                  <input
+                                    type="number"
+                                    placeholder="Kosong = auto"
+                                    value={row.overrideValue ?? ''}
+                                    onChange={(e) =>
+                                      setNominalOverride(
+                                        activeEmp.karyawan.nik,
+                                        masaPajak,
+                                        row.key,
+                                        parseNullableNumber(e.target.value)
+                                      )
+                                    }
+                                    className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-right text-sm outline-none focus:border-amber-500"
+                                  />
+                                </td>
+                                <td className="p-3 text-right font-black text-white">
+                                  Rp {formatCurrency(row.finalValue)}
+                                </td>
+                                <td className="p-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNominalOverride(
+                                        activeEmp.karyawan.nik,
+                                        masaPajak,
+                                        row.key,
+                                        null
+                                      )
+                                    }
+                                    disabled={!isOverridden}
+                                    className={`rounded-lg px-3 py-2 text-[11px] font-bold ${
+                                      isOverridden
+                                        ? 'bg-slate-800 text-slate-200'
+                                        : 'cursor-not-allowed bg-slate-900 text-slate-600'
+                                    }`}
+                                  >
+                                    Reset
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </section>

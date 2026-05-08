@@ -8,6 +8,7 @@ import {
   InputNonPegawai,
   KonfigurasiTarif,
   MetodePajak,
+  NominalOverrideKey,
   OverrideBpjsKaryawan,
   OverrideBpjsPerusahaan,
   ResidentStatus,
@@ -19,6 +20,13 @@ import { DEFAULT_TARIF_BPJS } from '../lib/constants';
 import { hitungPajakBulanan } from '../lib/taxEngineBulanan';
 import { hitungPenyesuaianDesember } from '../lib/taxEngineTahunan';
 import { hitungPajakNonPegawai } from '../lib/taxEngineNonPegawai';
+import {
+  applyNominalOverrides,
+  buildNominalOverrideAuditLogs,
+  clearLegacyBpjsOverride,
+  normalizeNominalOverrideValue,
+  updateNominalOverrides,
+} from '../lib/payrollOverrides';
 
 interface EmployeeData {
   karyawan: DataKaryawan;
@@ -67,6 +75,12 @@ interface PayrollStore {
     nik: string,
     bulan: number,
     updates: UpdateVariablePayload
+  ) => void;
+  setNominalOverride: (
+    nik: string,
+    bulan: number,
+    key: NominalOverrideKey,
+    value: number | null
   ) => void;
 }
 
@@ -332,30 +346,34 @@ function mapNonPegawaiResult(
   input: InputGajiBulanan,
   hasil: HasilKalkulasiNonPegawai
 ): HasilKalkulasiTetap {
+  const effectiveInput = applyNominalOverrides(input);
   const totalPendapatan =
-    input.gajiPokok +
-    input.tunjanganTetap +
-    input.tunjanganVariabel +
-    input.thrAtauBonus +
-    input.naturaTaxable;
+    effectiveInput.gajiPokok +
+    effectiveInput.tunjanganTetap +
+    effectiveInput.tunjanganVariabel +
+    effectiveInput.thrAtauBonus +
+    effectiveInput.naturaTaxable;
 
   const pajakTerutang = floorRupiah(hasil?.pajakTerutang);
   const thpBersih = floorRupiah(hasil?.thpBersih);
+  const overrideLogs = buildNominalOverrideAuditLogs(input, karyawan.tipeKaryawan);
 
   return {
     metodePajak: karyawan.metodePajak,
     residentStatus: karyawan.residentStatus,
     isMasaPajakTerakhir: input.bulan === karyawan.bulanSelesai,
     totalGajiTunjangan:
-      input.gajiPokok + input.tunjanganTetap + input.tunjanganVariabel,
+      effectiveInput.gajiPokok +
+      effectiveInput.tunjanganTetap +
+      effectiveInput.tunjanganVariabel,
     totalPenghasilanCash:
-      input.gajiPokok +
-      input.tunjanganTetap +
-      input.tunjanganVariabel +
-      input.thrAtauBonus,
-    thrAtauBonus: input.thrAtauBonus,
-    naturaTaxable: input.naturaTaxable,
-    premiAsuransiSwastaPerusahaan: input.premiAsuransiSwastaPerusahaan,
+      effectiveInput.gajiPokok +
+      effectiveInput.tunjanganTetap +
+      effectiveInput.tunjanganVariabel +
+      effectiveInput.thrAtauBonus,
+    thrAtauBonus: effectiveInput.thrAtauBonus,
+    naturaTaxable: effectiveInput.naturaTaxable,
+    premiAsuransiSwastaPerusahaan: effectiveInput.premiAsuransiSwastaPerusahaan,
     dasarUpahBpjs: 0,
     premiJkkPerusahaan: 0,
     premiJkmPerusahaan: 0,
@@ -364,7 +382,8 @@ function mapNonPegawaiResult(
     premiJpPerusahaan: 0,
     tunjanganPajakGrossUp: 0,
     totalPenambahBrutoPajak:
-      input.naturaTaxable + input.premiAsuransiSwastaPerusahaan,
+      effectiveInput.naturaTaxable +
+      effectiveInput.premiAsuransiSwastaPerusahaan,
     totalBruto: floorRupiah(hasil?.totalBruto ?? totalPendapatan),
     iuranJhtKaryawan: 0,
     iuranJpKaryawan: 0,
@@ -382,7 +401,10 @@ function mapNonPegawaiResult(
     refundPajak: 0,
     statusLebihBayar: false,
     thpBersih,
-    logKalkulasi: Array.isArray(hasil?.logKalkulasi) ? hasil.logKalkulasi : [],
+    logKalkulasi: [
+      ...overrideLogs,
+      ...(Array.isArray(hasil?.logKalkulasi) ? hasil.logKalkulasi : []),
+    ],
   };
 }
 
@@ -482,12 +504,13 @@ function calculateFullYear(
   if (emp.karyawan.tipeKaryawan === 'NON_PEGAWAI') {
     for (const bulan of bulanAktif) {
       const inp = normalizeInputConfig(emp.monthlyInputs[bulan], config);
+      const effectiveInput = applyNominalOverrides(inp);
       const totalPendapatan =
-        inp.gajiPokok +
-        inp.tunjanganTetap +
-        inp.tunjanganVariabel +
-        inp.thrAtauBonus +
-        inp.naturaTaxable;
+        effectiveInput.gajiPokok +
+        effectiveInput.tunjanganTetap +
+        effectiveInput.tunjanganVariabel +
+        effectiveInput.thrAtauBonus +
+        effectiveInput.naturaTaxable;
 
       const inputNonPegawai: InputNonPegawai = {
         totalPendapatan,
@@ -793,6 +816,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           updates.overrideBpjsPerusahaan !== undefined ||
           updates.overrideBpjsKaryawan !== undefined,
         originalTunjangan: currentInput.originalTunjangan,
+        nominalOverrides: currentInput.nominalOverrides,
       };
 
       const updatedInputs: Record<number, InputGajiBulanan> = {
@@ -802,6 +826,49 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       const updatedEmp: EmployeeData = {
         ...emp,
         monthlyInputs: updatedInputs,
+      };
+
+      return {
+        employees: {
+          ...state.employees,
+          [nik]: {
+            ...updatedEmp,
+            monthlyHasils: calculateFullYear(updatedEmp, state.configBpjs),
+          },
+        },
+      };
+    }),
+
+  setNominalOverride: (nik, bulan, key, value) =>
+    set((state) => {
+      const emp = state.employees[nik];
+      if (!emp) return state;
+
+      const currentInput = emp.monthlyInputs[bulan];
+      if (!currentInput) return state;
+
+      const normalizedValue = normalizeNominalOverrideValue(value);
+      const nextNominalOverrides = updateNominalOverrides(
+        currentInput.nominalOverrides,
+        key,
+        normalizedValue ?? null
+      );
+      const nextLegacyBpjs = clearLegacyBpjsOverride(currentInput, key);
+
+      const newInput: InputGajiBulanan = {
+        ...currentInput,
+        nominalOverrides: nextNominalOverrides,
+        overrideBpjsPerusahaan: nextLegacyBpjs.overrideBpjsPerusahaan,
+        overrideBpjsKaryawan: nextLegacyBpjs.overrideBpjsKaryawan,
+        isOverridden: true,
+      };
+
+      const updatedEmp: EmployeeData = {
+        ...emp,
+        monthlyInputs: {
+          ...emp.monthlyInputs,
+          [bulan]: newInput,
+        },
       };
 
       return {
