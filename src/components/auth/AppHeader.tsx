@@ -9,6 +9,7 @@ export function AppHeader({
 }) {
   return (
     <header className="border-b border-slate-800 bg-slate-950/95">
+    {/* // <header className="border-b border-slate-800 bg-[#2F3061]"> */}
       <div className="mx-auto flex max-w-[1700px] flex-col gap-4 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-4">
           <Link href="/bulk" className="text-lg font-black tracking-tight text-indigo-400">
