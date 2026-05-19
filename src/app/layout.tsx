@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { AppHeader } from "../components/auth/AppHeader";
 import { SessionResetBridge } from "../components/auth/SessionResetBridge";
 import { getCurrentUserProfile } from "../lib/auth";
 import "./globals.css";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AppSidebar } from "@/components/app-sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,9 +37,43 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-slate-950">
-        <SessionResetBridge authenticated={Boolean(currentUser)} />
-        {currentUser ? <AppHeader currentUser={currentUser} /> : null}
-        {children}
+        <TooltipProvider>
+          <SessionResetBridge authenticated={Boolean(currentUser)} />
+          {currentUser ? (
+            <SidebarProvider>
+              <AppSidebar currentUser={currentUser} />
+              <SidebarInset>
+                <header className="flex h-16 shrink-0 items-center gap-2 border-b border-[#6CA6C1]/20 bg-[#343434] text-[#F7FFF7] transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+                  <div className="flex items-center gap-2 px-4">
+                    <SidebarTrigger className="-ml-1 text-[#F7FFF7]/75 hover:bg-[#2F3061] hover:text-[#FFE66D]" />
+                    <Separator
+                      orientation="vertical"
+                      className="mr-2 bg-[#6CA6C1]/30 data-[orientation=vertical]:h-4"
+                    />
+                    <Breadcrumb>
+                      <BreadcrumbList className="text-[#F7FFF7]/60">
+                        <BreadcrumbItem className="hidden md:block">
+                          <BreadcrumbLink href="/bulk" className="hover:text-[#FFE66D]">
+                            Payroll Coretax
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator className="hidden text-[#6CA6C1]/70 md:block" />
+                        <BreadcrumbItem>
+                          <BreadcrumbPage className="font-semibold text-[#F7FFF7]">
+                            Payroll Workspace
+                          </BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </BreadcrumbList>
+                    </Breadcrumb>
+                  </div>
+                </header>
+                {children}
+              </SidebarInset>
+            </SidebarProvider>
+          ) : (
+            children
+          )}
+        </TooltipProvider>
       </body>
     </html>
   );
