@@ -82,6 +82,7 @@ interface PayrollStore {
     key: NominalOverrideKey,
     value: number | null
   ) => void;
+  setSubjekPajakSejakAwalTahun: (nik: string, value: boolean) => void;
 }
 
 const PASSPORT_KEYS = [
@@ -102,6 +103,12 @@ const METODE_PAJAK_KEYS = [
   'Metode Pajak',
   'Metode',
   'Tax Method',
+] as const;
+
+const SUBJEK_PAJAK_AWAL_TAHUN_KEYS = [
+  'Subjek Pajak Sejak Awal Tahun',
+  'Subjek Pajak Awal Tahun',
+  'Sejak Awal Tahun',
 ] as const;
 
 function coerceCellToString(value: unknown): string {
@@ -238,6 +245,25 @@ function parseResidentStatus(row: Record<string, unknown>): ResidentStatus {
   return 'RESIDENT';
 }
 
+function parseSubjekPajakSejakAwalTahun(
+  row: Record<string, unknown>
+): boolean {
+  const raw = bacaString(row, ...SUBJEK_PAJAK_AWAL_TAHUN_KEYS).toUpperCase();
+
+  if (!raw) return true;
+  if (
+    raw === 'TIDAK' ||
+    raw === 'NO' ||
+    raw === 'N' ||
+    raw === 'FALSE' ||
+    raw === '0'
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function parseStatusPtkp(
   row: Record<string, unknown>,
   tipeKaryawan: TipeKaryawan
@@ -305,6 +331,7 @@ function buildEmptyResult(
     thrAtauBonus: 0,
     naturaTaxable: 0,
     premiAsuransiSwastaPerusahaan: 0,
+    iuranPensiunPerusahaan: 0,
     dasarUpahBpjs: 0,
     premiJkkPerusahaan: 0,
     premiJkmPerusahaan: 0,
@@ -317,6 +344,7 @@ function buildEmptyResult(
     iuranJhtKaryawan: 0,
     iuranJpKaryawan: 0,
     iuranBpjsKesKaryawan: 0,
+    iuranPensiunKaryawan: 0,
     potonganDplkKaryawan: 0,
     potonganZakat: 0,
     totalIuranCashKaryawan: 0,
@@ -374,6 +402,7 @@ function mapNonPegawaiResult(
     thrAtauBonus: effectiveInput.thrAtauBonus,
     naturaTaxable: effectiveInput.naturaTaxable,
     premiAsuransiSwastaPerusahaan: effectiveInput.premiAsuransiSwastaPerusahaan,
+    iuranPensiunPerusahaan: effectiveInput.iuranPensiunPerusahaan,
     dasarUpahBpjs: 0,
     premiJkkPerusahaan: 0,
     premiJkmPerusahaan: 0,
@@ -388,6 +417,7 @@ function mapNonPegawaiResult(
     iuranJhtKaryawan: 0,
     iuranJpKaryawan: 0,
     iuranBpjsKesKaryawan: 0,
+    iuranPensiunKaryawan: 0,
     potonganDplkKaryawan: 0,
     potonganZakat: 0,
     totalIuranCashKaryawan: 0,
@@ -656,6 +686,8 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
         }
 
         const residentStatus = parseResidentStatus(row);
+        const subjekPajakSejakAwalTahun =
+          parseSubjekPajakSejakAwalTahun(row);
         const counterpartTinRaw = bacaString(row, 'Counterpart TIN', 'CounterpartTin');
         const counterpartTin = counterpartTinRaw
           ? sanitizeFixedDigits(counterpartTinRaw, 16)
@@ -689,6 +721,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           tipeKaryawan,
           bulanMulai,
           bulanSelesai: bulanSelesaiFinal,
+          subjekPajakSejakAwalTahun,
           jabatan: bacaString(row, 'Jabatan') || undefined,
           counterpartTin: counterpartTin ?? nik,
           temporaryTin: bacaString(row, 'Temporary TIN') || undefined,
@@ -710,13 +743,12 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
             premiAsuransiSwastaPerusahaan: floorRupiah(
               row['Premi Asuransi Swasta Perusahaan']
             ),
+            iuranPensiunPerusahaan: floorRupiah(row['Iuran Pensiun Perusahaan']),
+            iuranPensiunKaryawan: floorRupiah(row['Iuran Pensiun Karyawan']),
             dplkPerusahaan: floorRupiah(row['DPLK Perusahaan']),
             dplkKaryawan: floorRupiah(row['DPLK Karyawan']),
             zakat: 0,
-            dasarUpahBpjs:
-              row['Dasar Upah BPJS'] !== undefined && row['Dasar Upah BPJS'] !== null
-                ? floorRupiah(row['Dasar Upah BPJS'])
-                : undefined,
+            dasarUpahBpjs: undefined,
             overrideBpjsPerusahaan: undefined,
             overrideBpjsKaryawan: undefined,
             originalTunjangan: totalTunjanganTetap,
@@ -755,6 +787,14 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       const newThrAtauBonus = hasBonusOrThrUpdate
         ? floorRupiah(updates.bonus) + floorRupiah(updates.thr)
         : currentInput.thrAtauBonus;
+      const nextNominalOverrides =
+        updates.dasarUpahBpjs === undefined
+          ? currentInput.nominalOverrides
+          : updateNominalOverrides(
+              currentInput.nominalOverrides,
+              'dasarUpahBpjs',
+              updates.dasarUpahBpjs
+            );
 
       const newInput: InputGajiBulanan = {
         ...currentInput,
@@ -787,12 +827,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           updates.zakat !== undefined
             ? floorRupiah(updates.zakat)
             : currentInput.zakat,
-        dasarUpahBpjs:
-          updates.dasarUpahBpjs === undefined
-            ? currentInput.dasarUpahBpjs
-            : updates.dasarUpahBpjs === null
-              ? undefined
-              : floorRupiah(updates.dasarUpahBpjs),
+        dasarUpahBpjs: undefined,
         overrideBpjsPerusahaan: mergeOverridePerusahaan(
           currentInput.overrideBpjsPerusahaan,
           updates.overrideBpjsPerusahaan
@@ -816,7 +851,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           updates.overrideBpjsPerusahaan !== undefined ||
           updates.overrideBpjsKaryawan !== undefined,
         originalTunjangan: currentInput.originalTunjangan,
-        nominalOverrides: currentInput.nominalOverrides,
+        nominalOverrides: nextNominalOverrides,
       };
 
       const updatedInputs: Record<number, InputGajiBulanan> = {
@@ -868,6 +903,30 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
         monthlyInputs: {
           ...emp.monthlyInputs,
           [bulan]: newInput,
+        },
+      };
+
+      return {
+        employees: {
+          ...state.employees,
+          [nik]: {
+            ...updatedEmp,
+            monthlyHasils: calculateFullYear(updatedEmp, state.configBpjs),
+          },
+        },
+      };
+    }),
+
+  setSubjekPajakSejakAwalTahun: (nik, value) =>
+    set((state) => {
+      const emp = state.employees[nik];
+      if (!emp) return state;
+
+      const updatedEmp: EmployeeData = {
+        ...emp,
+        karyawan: {
+          ...emp.karyawan,
+          subjekPajakSejakAwalTahun: value,
         },
       };
 

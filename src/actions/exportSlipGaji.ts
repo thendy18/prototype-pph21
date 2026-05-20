@@ -111,6 +111,12 @@ export function buildSlipGajiPayload(source: SlipGajiSource): SlipGajiPayload {
     affectsTakeHome: true,
   });
   pushLineItem(potongan, {
+    label: 'Iuran Pensiun Karyawan',
+    amount: hasil.iuranPensiunKaryawan,
+    category: 'potongan',
+    affectsTakeHome: true,
+  });
+  pushLineItem(potongan, {
     label: 'DPLK Karyawan',
     amount: hasil.potonganDplkKaryawan,
     category: 'potongan',
@@ -162,6 +168,12 @@ export function buildSlipGajiPayload(source: SlipGajiSource): SlipGajiPayload {
   pushLineItem(informational, {
     label: 'Premi Asuransi Swasta Perusahaan',
     amount: input.premiAsuransiSwastaPerusahaan,
+    category: 'informational',
+    affectsTakeHome: false,
+  });
+  pushLineItem(informational, {
+    label: 'Iuran Pensiun Perusahaan',
+    amount: input.iuranPensiunPerusahaan,
     category: 'informational',
     affectsTakeHome: false,
   });

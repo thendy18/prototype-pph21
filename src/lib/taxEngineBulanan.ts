@@ -227,6 +227,23 @@ export function hitungPajakBulanan(
       `BPJS Kes (${bpjsKaryawan.iuranBpjsKes})`,
   });
 
+  const totalPotonganTambahanKaryawan =
+    floorRupiah(effectiveInput.iuranPensiunKaryawan) +
+    floorRupiah(effectiveInput.dplkKaryawan) +
+    floorRupiah(effectiveInput.zakat);
+
+  if (totalPotonganTambahanKaryawan > 0) {
+    log.push({
+      langkah: '4a',
+      deskripsi: 'Menghitung potongan tambahan karyawan',
+      nilai: totalPotonganTambahanKaryawan,
+      rumus:
+        `Iuran Pensiun (${effectiveInput.iuranPensiunKaryawan}) + ` +
+        `DPLK (${effectiveInput.dplkKaryawan}) + ` +
+        `Zakat (${effectiveInput.zakat})`,
+    });
+  }
+
   const totalGajiTunjangan =
     floorRupiah(effectiveInput.gajiPokok) +
     floorRupiah(effectiveInput.tunjanganTetap) +
@@ -251,6 +268,16 @@ export function hitungPajakBulanan(
       `Asuransi Swasta ER (${effectiveInput.premiAsuransiSwastaPerusahaan}) + ` +
       `Penambah Bruto BPJS (${bpjsPerusahaan.totalPenambahBrutoPajak})`,
   });
+
+  if (floorRupiah(effectiveInput.iuranPensiunPerusahaan) > 0) {
+    log.push({
+      langkah: '5b',
+      deskripsi: 'Mencatat iuran pensiun yang ditanggung perusahaan',
+      nilai: effectiveInput.iuranPensiunPerusahaan,
+      rumus:
+        'Bersifat informasional sesuai ketentuan iuran program pensiun dan tidak menambah bruto pajak.',
+    });
+  }
 
   const kategoriTER =
     karyawan.residentStatus === 'RESIDENT'
@@ -326,6 +353,7 @@ export function hitungPajakBulanan(
   const totalPenghasilanCashFinal = totalPenghasilanCash + tunjanganPajakGrossUp;
   const totalIuranCashKaryawan =
     bpjsKaryawan.totalPotonganCash +
+    floorRupiah(effectiveInput.iuranPensiunKaryawan) +
     floorRupiah(effectiveInput.dplkKaryawan) +
     floorRupiah(effectiveInput.zakat);
 
@@ -353,6 +381,7 @@ export function hitungPajakBulanan(
     thrAtauBonus: effectiveInput.thrAtauBonus,
     naturaTaxable: effectiveInput.naturaTaxable,
     premiAsuransiSwastaPerusahaan: effectiveInput.premiAsuransiSwastaPerusahaan,
+    iuranPensiunPerusahaan: effectiveInput.iuranPensiunPerusahaan,
     dasarUpahBpjs: bpjsPerusahaan.dasarUpahBpjs,
 
     premiJkkPerusahaan: bpjsPerusahaan.premiJkk,
@@ -368,11 +397,13 @@ export function hitungPajakBulanan(
     iuranJhtKaryawan: bpjsKaryawan.iuranJht,
     iuranJpKaryawan: bpjsKaryawan.iuranJp,
     iuranBpjsKesKaryawan: bpjsKaryawan.iuranBpjsKes,
+    iuranPensiunKaryawan: effectiveInput.iuranPensiunKaryawan,
     potonganDplkKaryawan: effectiveInput.dplkKaryawan,
     potonganZakat: effectiveInput.zakat,
     totalIuranCashKaryawan,
     totalPengurangPajak:
       bpjsKaryawan.totalPengurangPajak +
+      floorRupiah(effectiveInput.iuranPensiunKaryawan) +
       floorRupiah(effectiveInput.dplkKaryawan) +
       floorRupiah(effectiveInput.zakat),
 

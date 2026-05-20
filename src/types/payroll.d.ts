@@ -84,6 +84,7 @@ export interface DataKaryawan {
   tipeKaryawan: TipeKaryawan;
   bulanMulai: number;
   bulanSelesai: number;
+  subjekPajakSejakAwalTahun: boolean;
 
   // Metadata tambahan yang akan berguna untuk XML / slip / BPA1
   jabatan?: string;
@@ -124,7 +125,9 @@ export type NominalOverrideKey =
   | 'thrAtauBonus'
   | 'naturaTaxable'
   | 'premiAsuransiSwastaPerusahaan'
+  | 'iuranPensiunPerusahaan'
   | 'dplkPerusahaan'
+  | 'iuranPensiunKaryawan'
   | 'dplkKaryawan'
   | 'zakat'
   | 'dasarUpahBpjs'
@@ -152,8 +155,10 @@ export interface InputGajiBulanan {
   thrAtauBonus: number; // penghasilan tidak teratur
   naturaTaxable: number;
   premiAsuransiSwastaPerusahaan: number;
+  iuranPensiunPerusahaan: number;
 
   // Potongan nominal
+  iuranPensiunKaryawan: number;
   dplkPerusahaan: number;
   dplkKaryawan: number;
   zakat: number;
@@ -185,6 +190,7 @@ export interface HasilKalkulasiTetap {
   thrAtauBonus: number;
   naturaTaxable: number;
   premiAsuransiSwastaPerusahaan: number;
+  iuranPensiunPerusahaan: number;
   dasarUpahBpjs: number;
 
   // Premi / iuran perusahaan
@@ -203,6 +209,7 @@ export interface HasilKalkulasiTetap {
   iuranJhtKaryawan: number;
   iuranJpKaryawan: number;
   iuranBpjsKesKaryawan: number;
+  iuranPensiunKaryawan: number;
   potonganDplkKaryawan: number;
   potonganZakat: number;
   totalIuranCashKaryawan: number;
@@ -280,6 +287,7 @@ export interface HasilPenyesuaianTahunan {
   totalBrutoDisetahunkan: number;
   totalBiayaJabatan: number;
   totalJhtJpKaryawan: number;
+  totalIuranPensiunKaryawan: number;
   totalDplkKaryawan: number;
   totalPengurangPajak: number;
   penghasilanNetoAktual: number;

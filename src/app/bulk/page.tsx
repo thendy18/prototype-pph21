@@ -141,6 +141,7 @@ export default function PayrollProPage() {
     employees,
     importExcel,
     setNominalOverride,
+    setSubjekPajakSejakAwalTahun,
     updateVariable,
   } = usePayrollStore();
 
@@ -1003,6 +1004,61 @@ export default function PayrollProPage() {
               </div>
 
               <div className="space-y-8">
+                <section className="space-y-4">
+                  <div className="flex items-end justify-between gap-4 border-b border-[#6CA6C1]/25 pb-2">
+                    <div>
+                      <h4 className="text-[11px] font-black uppercase tracking-[0.2em] text-[#6CA6C1]">
+                        Status Pajak Tahunan
+                      </h4>
+                      <p className="mt-2 text-[11px] text-[#F7FFF7]/55">
+                        Tentukan apakah karyawan sudah menjadi subjek pajak dalam negeri sejak 1 Januari.
+                        Status ini dipakai untuk memutuskan apakah neto perlu disetahunkan pada masa pajak terakhir.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 p-4">
+                    <Field className="space-y-3">
+                      <FieldLabel className={SETTINGS_LABEL_CLASS}>
+                        Subjek Pajak Sejak Awal Tahun
+                      </FieldLabel>
+                      <Select
+                        value={
+                          activeEmp.karyawan.subjekPajakSejakAwalTahun ? 'YA' : 'TIDAK'
+                        }
+                        onValueChange={(value) =>
+                          setSubjekPajakSejakAwalTahun(
+                            activeEmp.karyawan.nik,
+                            value === 'YA'
+                          )
+                        }
+                      >
+                        <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                          <SelectValue placeholder="Pilih status subjek pajak" />
+                        </SelectTrigger>
+                        <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                          <SelectGroup>
+                            <SelectItem value="YA" className={SETTINGS_SELECT_ITEM_CLASS}>
+                              YA
+                            </SelectItem>
+                            <SelectItem
+                              value="TIDAK"
+                              className={SETTINGS_SELECT_ITEM_CLASS}
+                            >
+                              TIDAK
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] leading-relaxed text-[#F7FFF7]/55">
+                        YA berarti neto tidak disetahunkan hanya karena karyawan mulai bekerja di tengah
+                        tahun. TIDAK dipakai untuk kasus khusus seperti subjek pajak yang baru dimulai
+                        setelah awal tahun.
+                      </p>
+                    </Field>
+                  </div>
+                </section>
+
                 <section className="space-y-4">
                   <div className="flex items-end justify-between gap-4 border-b border-[#FFE66D]/25 pb-2">
                     <div>

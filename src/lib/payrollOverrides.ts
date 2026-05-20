@@ -16,7 +16,9 @@ type DirectOverrideKey =
   | 'thrAtauBonus'
   | 'naturaTaxable'
   | 'premiAsuransiSwastaPerusahaan'
+  | 'iuranPensiunPerusahaan'
   | 'dplkPerusahaan'
+  | 'iuranPensiunKaryawan'
   | 'dplkKaryawan'
   | 'zakat'
   | 'dasarUpahBpjs';
@@ -25,6 +27,7 @@ type OverrideGroup =
   | 'Penghasilan Dasar'
   | 'Penambah Bruto'
   | 'Potongan Personal'
+  | 'Informasi Perusahaan'
   | 'BPJS Perusahaan'
   | 'BPJS Karyawan';
 
@@ -82,7 +85,19 @@ const ROW_DEFINITIONS: readonly RowDefinition[] = [
     group: 'Penambah Bruto',
     scope: 'ALL',
   },
+  {
+    key: 'iuranPensiunPerusahaan',
+    label: 'Iuran Pensiun Perusahaan',
+    group: 'Informasi Perusahaan',
+    scope: 'TETAP_ONLY',
+  },
   { key: 'dplkPerusahaan', label: 'DPLK Perusahaan', group: 'Potongan Personal', scope: 'TETAP_ONLY' },
+  {
+    key: 'iuranPensiunKaryawan',
+    label: 'Iuran Pensiun Karyawan',
+    group: 'Potongan Personal',
+    scope: 'TETAP_ONLY',
+  },
   { key: 'dplkKaryawan', label: 'DPLK Karyawan', group: 'Potongan Personal', scope: 'TETAP_ONLY' },
   { key: 'zakat', label: 'Zakat', group: 'Potongan Personal', scope: 'TETAP_ONLY' },
   { key: 'dasarUpahBpjs', label: 'Dasar Upah BPJS', group: 'BPJS Perusahaan', scope: 'TETAP_ONLY' },
@@ -215,14 +230,12 @@ export function applyNominalOverrides(input: InputGajiBulanan): InputGajiBulanan
       input,
       'premiAsuransiSwastaPerusahaan'
     ),
+    iuranPensiunPerusahaan: setDirectEffectiveValue(input, 'iuranPensiunPerusahaan'),
     dplkPerusahaan: setDirectEffectiveValue(input, 'dplkPerusahaan'),
+    iuranPensiunKaryawan: setDirectEffectiveValue(input, 'iuranPensiunKaryawan'),
     dplkKaryawan: setDirectEffectiveValue(input, 'dplkKaryawan'),
     zakat: setDirectEffectiveValue(input, 'zakat'),
-    dasarUpahBpjs:
-      getDirectOverrideValue(input, 'dasarUpahBpjs') ??
-      (input.dasarUpahBpjs !== undefined
-        ? floorRupiah(input.dasarUpahBpjs)
-        : undefined),
+    dasarUpahBpjs: getDirectOverrideValue(input, 'dasarUpahBpjs'),
     overrideBpjsPerusahaan: buildCompanyBpjsOverrides(input),
     overrideBpjsKaryawan: buildEmployeeBpjsOverrides(input),
   };

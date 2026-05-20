@@ -82,6 +82,18 @@ function hitungPajakPasal17(pkpDibulatkan: number): number {
   return totalPajak;
 }
 
+function perluDisetahunkan(
+  karyawan: DataKaryawan,
+  jumlahBulanAktif: number
+): boolean {
+  return (
+    jumlahBulanAktif < 12 &&
+    karyawan.residentStatus === 'RESIDENT' &&
+    karyawan.tipeKaryawan === 'TETAP' &&
+    karyawan.subjekPajakSejakAwalTahun === false
+  );
+}
+
 function hitungPenyesuaianTahunanDetail(
   karyawan: DataKaryawan,
   hasilSebelumnya: HasilKalkulasiTetap[],
@@ -93,6 +105,7 @@ function hitungPenyesuaianTahunanDetail(
 } {
   const jumlahBulanAktif = hasilSebelumnya.length + 1;
   const nominalPtkp = getNominalPtkp(karyawan.statusPtkp);
+  const annualized = perluDisetahunkan(karyawan, jumlahBulanAktif);
 
   const totalBrutoSebelumnya = hasilSebelumnya.reduce(
     (sum, item) => sum + item.totalBruto,
@@ -124,19 +137,17 @@ function hitungPenyesuaianTahunanDetail(
   const penghasilanNetoAktual =
     totalBrutoAktual - totalBiayaJabatan - totalPengurangPajak;
 
-  const penghasilanNetoDisetahunkan =
-    jumlahBulanAktif >= 12
-      ? penghasilanNetoAktual
-      : floorRupiah((penghasilanNetoAktual * 12) / jumlahBulanAktif);
+  const penghasilanNetoDisetahunkan = annualized
+    ? floorRupiah((penghasilanNetoAktual * 12) / jumlahBulanAktif)
+    : penghasilanNetoAktual;
 
   const pkpRaw = Math.max(0, penghasilanNetoDisetahunkan - nominalPtkp);
   const pkp = floorRupiah(pkpRaw / 1000) * 1000;
 
   const totalPajakSetahunan = hitungPajakPasal17(pkp);
-  const totalPajakBagianTahun =
-    jumlahBulanAktif >= 12
-      ? totalPajakSetahunan
-      : floorRupiah((totalPajakSetahunan * jumlahBulanAktif) / 12);
+  const totalPajakBagianTahun = annualized
+    ? floorRupiah((totalPajakSetahunan * jumlahBulanAktif) / 12)
+    : totalPajakSetahunan;
 
   const multiplierIdentitas = gunakanTarifLebihTinggiIdentitas(karyawan) ? 1.2 : 1;
   const totalPajakBagianTahunFinal = floorDecimalProduct(
@@ -169,12 +180,19 @@ function hitungPenyesuaianTahunanDetail(
     rumus: `Bruto Aktual (${totalBrutoAktual}) - Biaya Jabatan (${totalBiayaJabatan}) - Pengurang Pajak (${totalPengurangPajak})`,
   });
 
-  if (jumlahBulanAktif < 12) {
+  if (annualized) {
     log.push({
       langkah: '13',
-      deskripsi: 'Menyetahunkan neto untuk bagian tahun',
+      deskripsi: 'Menyetahunkan neto karena subjek pajak dimulai setelah awal tahun',
       nilai: penghasilanNetoDisetahunkan,
       rumus: `Neto Aktual (${penghasilanNetoAktual}) x 12 / ${jumlahBulanAktif}`,
+    });
+  } else if (jumlahBulanAktif < 12) {
+    log.push({
+      langkah: '13',
+      deskripsi: 'Tidak menyetahunkan neto karena subjek pajak sudah ada sejak awal tahun',
+      nilai: penghasilanNetoDisetahunkan,
+      rumus: 'Neto aktual langsung dipakai untuk masa kerja yang berjalan',
     });
   } else {
     log.push({
@@ -197,8 +215,10 @@ function hitungPenyesuaianTahunanDetail(
     deskripsi: 'Menghitung PPh Pasal 17',
     nilai: totalPajakSetahunan,
     rumus:
-      jumlahBulanAktif < 12
+      annualized
         ? `PPh setahunan ${totalPajakSetahunan}, lalu diprorata menjadi ${totalPajakBagianTahun}`
+        : jumlahBulanAktif < 12
+          ? `PPh dihitung dari neto aktual bagian tahun = ${totalPajakSetahunan}`
         : `PPh setahun penuh = ${totalPajakSetahunan}`,
   });
 
@@ -220,7 +240,9 @@ function hitungPenyesuaianTahunanDetail(
 
   return {
     totalBrutoAktual,
-    totalBrutoDisetahunkan: jumlahBulanAktif >= 12 ? totalBrutoAktual : floorRupiah((totalBrutoAktual * 12) / jumlahBulanAktif),
+    totalBrutoDisetahunkan: annualized
+      ? floorRupiah((totalBrutoAktual * 12) / jumlahBulanAktif)
+      : totalBrutoAktual,
     totalBiayaJabatan,
     totalJhtJpKaryawan:
       hasilSebelumnya.reduce(
@@ -229,6 +251,11 @@ function hitungPenyesuaianTahunanDetail(
       ) +
       hasilMasaTerakhirAcuan.iuranJhtKaryawan +
       hasilMasaTerakhirAcuan.iuranJpKaryawan,
+    totalIuranPensiunKaryawan:
+      hasilSebelumnya.reduce(
+        (sum, item) => sum + item.iuranPensiunKaryawan,
+        0
+      ) + hasilMasaTerakhirAcuan.iuranPensiunKaryawan,
     totalDplkKaryawan:
       hasilSebelumnya.reduce((sum, item) => sum + item.potonganDplkKaryawan, 0) +
       hasilMasaTerakhirAcuan.potonganDplkKaryawan,
