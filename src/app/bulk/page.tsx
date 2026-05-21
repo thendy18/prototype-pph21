@@ -133,7 +133,7 @@ type BpmpModalSettings = Omit<BpmpGlobalSettings, 'withholdingDate' | 'strict'> 
   withholdingDate: string;
 };
 
-export default function PayrollProPage() {
+export default function TaxelingPage() {
   const {
     configBpjs,
     setConfigBpjs,
@@ -400,7 +400,7 @@ export default function PayrollProPage() {
         <section className="rounded-2xl border border-[#6CA6C1]/25 bg-[#2F3061] shadow-xl shadow-black/20">
           <div className="flex flex-col gap-4 border-b border-[#6CA6C1]/20 p-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h1 className="text-2xl font-black text-[#FFE66D]">PayrollPro</h1>
+              <h1 className="text-2xl font-black text-[#FFE66D]">Taxeling</h1>
               <p className="text-xs text-[#F7FFF7]/60">BPJS, PPh 21/26, audit log, dan export BPMP</p>
             </div>
             <div className="flex flex-wrap gap-2">
