@@ -31,7 +31,7 @@ export function LoginForm({
       <FieldGroup>
         <div className="flex flex-col items-center gap-2 text-center">
           <h1 className="text-3xl font-black tracking-tight text-[#FFE66D]">
-            Payroll Coretax
+            Taxeling
           </h1>
         </div>
 

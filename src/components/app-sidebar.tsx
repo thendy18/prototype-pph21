@@ -24,7 +24,7 @@ import {
 const baseData = {
   teams: [
     {
-      name: "Payroll Coretax",
+      name: "Taxeling",
       logo: (
         <WalletCardsIcon
         />
@@ -61,6 +61,10 @@ const baseData = {
         {
           title: "Bulk Payroll",
           url: "/bulk",
+        },
+        {
+          title: "Histori Periode",
+          url: "/history",
         },
       ],
     },

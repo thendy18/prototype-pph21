@@ -1,7 +1,13 @@
 'use client';
 
-import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import * as XLSX from 'xlsx';
+import {
+  finalizePayrollPeriod,
+  getPayrollPeriodLockStatus,
+  recordPayrollAuditEvent,
+  savePayrollPeriodHistory,
+} from '../../actions/payrollHistoryActions';
 import {
   downloadBpmpXml,
   generateBpmpXml,
@@ -14,6 +20,7 @@ import {
 import { buildNominalOverridePreviewRows } from '../../lib/payrollOverrides';
 import { usePayrollStore } from '../../store/usePayrollStore';
 import { DataPerusahaan, KonfigurasiTarif } from '../../types/payroll';
+import type { SavePayrollHistoryPayload } from '../../types/payrollHistory';
 import { SlipGajiSource } from '../../types/slipGaji';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -133,6 +140,111 @@ type BpmpModalSettings = Omit<BpmpGlobalSettings, 'withholdingDate' | 'strict'> 
   withholdingDate: string;
 };
 
+type ImportValidationIssue = {
+  row: number;
+  field: string;
+  message: string;
+};
+
+type ImportValidationReport = {
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  warningRows: number;
+  errors: ImportValidationIssue[];
+  warnings: ImportValidationIssue[];
+};
+
+function readCell(row: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = row[key];
+    if (value === undefined || value === null) continue;
+    const parsed = String(value).trim();
+    if (parsed) return parsed;
+  }
+
+  return '';
+}
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, '');
+}
+
+function isEmptyExcelRow(row: Record<string, unknown>): boolean {
+  return Object.values(row).every((value) => String(value ?? '').trim() === '');
+}
+
+function buildImportValidationReport(
+  rows: Record<string, unknown>[]
+): ImportValidationReport {
+  const errors: ImportValidationIssue[] = [];
+  const warnings: ImportValidationIssue[] = [];
+  const rowStatus = new Map<number, { hasError: boolean; hasWarning: boolean }>();
+  let totalRows = 0;
+
+  const mark = (row: number, type: 'error' | 'warning') => {
+    const current = rowStatus.get(row) ?? { hasError: false, hasWarning: false };
+    rowStatus.set(row, {
+      ...current,
+      hasError: current.hasError || type === 'error',
+      hasWarning: current.hasWarning || type === 'warning',
+    });
+  };
+
+  rows.forEach((row, index) => {
+    if (isEmptyExcelRow(row)) return;
+
+    totalRows += 1;
+    const excelRow = index + 2;
+    const addError = (field: string, message: string) => {
+      errors.push({ row: excelRow, field, message });
+      mark(excelRow, 'error');
+    };
+    const addWarning = (field: string, message: string) => {
+      warnings.push({ row: excelRow, field, message });
+      mark(excelRow, 'warning');
+    };
+
+    const nik = readCell(row, 'NIK', 'Nik');
+    if (!nik) addError('NIK', 'NIK wajib diisi.');
+    else if (digitsOnly(nik).length !== 16) addError('NIK', 'NIK harus tepat 16 digit angka.');
+
+    const metodePajak = readCell(row, 'Metode Pajak', 'Metode', 'Tax Method').toUpperCase();
+    if (!metodePajak) addError('Metode Pajak', 'Metode Pajak wajib diisi.');
+    else if (!['GROSS', 'NET', 'GROSS_UP'].includes(metodePajak)) {
+      addError('Metode Pajak', 'Metode Pajak harus GROSS, NET, atau GROSS_UP.');
+    }
+
+    const counterpartTin = readCell(row, 'Counterpart TIN', 'CounterpartTin');
+    if (counterpartTin && digitsOnly(counterpartTin).length !== 16) {
+      addError('Counterpart TIN', 'Counterpart TIN harus tepat 16 digit angka.');
+    }
+
+    const residentStatus = readCell(row, 'Resident Status', 'Status Resident').toUpperCase();
+    const passport = readCell(row, 'No Paspor', 'Nomor Paspor', 'Paspor', 'Passport', 'No Passport');
+    if ((residentStatus === 'NON_RESIDENT' || residentStatus === 'NON RESIDENT') && !passport) {
+      addWarning('No Paspor', 'WNA/non-resident sebaiknya mengisi nomor paspor untuk BPMP.');
+    }
+
+    const fasilitasPajak = readCell(row, 'Fasilitas Pajak', 'Tax Certificate', 'TaxCertificate');
+    if (fasilitasPajak && !['N/A', 'SKB', 'DTP', 'SKD', 'ETC'].includes(fasilitasPajak.toUpperCase())) {
+      addWarning('Fasilitas Pajak', 'Nilai tidak dikenal dan akan default ke N/A.');
+    }
+  });
+
+  const invalidRows = Array.from(rowStatus.values()).filter((row) => row.hasError).length;
+  const warningRows = Array.from(rowStatus.values()).filter((row) => row.hasWarning).length;
+
+  return {
+    totalRows,
+    validRows: Math.max(totalRows - invalidRows, 0),
+    errorRows: invalidRows,
+    warningRows,
+    errors,
+    warnings,
+  };
+}
+
 export default function TaxelingPage() {
   const {
     configBpjs,
@@ -151,8 +263,15 @@ export default function TaxelingPage() {
   const [isBpmpModalOpen, setIsBpmpModalOpen] = useState(false);
   const [slipExportNik, setSlipExportNik] = useState<string | null>(null);
   const [isExportingAllSlip, setIsExportingAllSlip] = useState(false);
+  const [isSavingHistory, startSaveHistoryTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
+  const [historyMessage, setHistoryMessage] = useState<string | null>(null);
+  const [periodLockMessage, setPeriodLockMessage] = useState<string | null>(null);
+  const [lockedPeriodKey, setLockedPeriodKey] = useState<string | null>(null);
+  const [isFinalizingPeriod, startFinalizePeriodTransition] = useTransition();
   const [selectedExcelFile, setSelectedExcelFile] = useState<File | null>(null);
+  const [importValidationReport, setImportValidationReport] =
+    useState<ImportValidationReport | null>(null);
   const [isDraggingExcel, setIsDraggingExcel] = useState(false);
   const [isImportingExcel, setIsImportingExcel] = useState(false);
   const [excelImportMessage, setExcelImportMessage] = useState<string | null>(null);
@@ -187,6 +306,8 @@ export default function TaxelingPage() {
     return Array.from({ length: 7 }, (_, index) => currentYear - 2 + index);
   }, []);
   type EmployeeListItem = (typeof employeeList)[number];
+  const currentPeriodKey = `${companyProfile.npwpPemotong || 'no-npwp'}:${masaPajak}:${tahunPayroll}`;
+  const isPeriodLocked = lockedPeriodKey === currentPeriodKey;
 
   const slipEligibleEmployees = useMemo(
     () =>
@@ -206,6 +327,30 @@ export default function TaxelingPage() {
     !!emp.monthlyHasils[masaPajak] &&
     emp.monthlyHasils[masaPajak].totalBruto > 0;
 
+  useEffect(() => {
+    if (!companyProfile.npwpPemotong) {
+      setLockedPeriodKey(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const result = await getPayrollPeriodLockStatus({
+        companyNpwp: companyProfile.npwpPemotong,
+        periodMonth: masaPajak,
+        periodYear: tahunPayroll,
+      });
+
+      if (cancelled) return;
+      setLockedPeriodKey(result.locked ? currentPeriodKey : null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [companyProfile.npwpPemotong, currentPeriodKey, masaPajak, tahunPayroll]);
+
   const toSlipSource = (emp: EmployeeListItem): SlipGajiSource => ({
     namaPerusahaan: companyProfile.namaPerusahaan,
     bulan: masaPajak,
@@ -214,6 +359,52 @@ export default function TaxelingPage() {
     input: emp.monthlyInputs[masaPajak],
     hasil: emp.monthlyHasils[masaPajak],
   });
+
+  const buildPayrollHistoryPayload = (): SavePayrollHistoryPayload => {
+    const employeesForPeriod = employeeList.filter(
+      (emp) => !!emp.monthlyInputs[masaPajak] && !!emp.monthlyHasils[masaPajak]
+    );
+
+    const summary = employeesForPeriod.reduce(
+      (acc, emp) => {
+        const hasil = emp.monthlyHasils[masaPajak];
+        return {
+          employeeCount: acc.employeeCount + 1,
+          totalBruto: acc.totalBruto + hasil.totalBruto,
+          totalTax: acc.totalTax + hasil.pajakTerutang,
+          totalThp: acc.totalThp + hasil.thpBersih,
+          savedAt: acc.savedAt,
+        };
+      },
+      {
+        employeeCount: 0,
+        totalBruto: 0,
+        totalTax: 0,
+        totalThp: 0,
+        savedAt: new Date().toISOString(),
+      }
+    );
+
+    const employeesSnapshot = Object.fromEntries(
+      employeesForPeriod.map((emp) => [
+        emp.karyawan.nik,
+        {
+          karyawan: emp.karyawan,
+          input: emp.monthlyInputs[masaPajak],
+          hasil: emp.monthlyHasils[masaPajak],
+        },
+      ])
+    );
+
+    return {
+      companyProfile,
+      periodMonth: masaPajak,
+      periodYear: tahunPayroll,
+      configBpjs,
+      employeesSnapshot,
+      summary,
+    };
+  };
 
   const setExcelFile = (file: File | null) => {
     if (!file) {
@@ -256,12 +447,18 @@ export default function TaxelingPage() {
 
   const clearExcelFile = () => {
     setExcelFile(null);
+    setImportValidationReport(null);
     if (excelInputRef.current) {
       excelInputRef.current.value = '';
     }
   };
 
   const importSelectedExcel = async () => {
+    if (isPeriodLocked) {
+      setExportError('Periode ini sudah dikunci. Import Excel tidak bisa dilakukan.');
+      return;
+    }
+
     if (!selectedExcelFile) {
       setExportError('Pilih file Excel terlebih dahulu.');
       return;
@@ -282,11 +479,34 @@ export default function TaxelingPage() {
           defval: '',
         }
       );
+      const report = buildImportValidationReport(data);
+      setImportValidationReport(report);
+
+      if (report.errors.length > 0) {
+        setExportError(
+          `Import dibatalkan. Ditemukan ${report.errors.length} error pada ${report.errorRows} baris.`
+        );
+        return;
+      }
+
       importExcel(data);
       setExportError(null);
       setExcelImportMessage(
         `Berhasil import ${data.length} baris dari ${selectedExcelFile.name}.`
       );
+      void recordPayrollAuditEvent({
+        eventType: 'IMPORT_EXCEL',
+        companyProfile,
+        periodMonth: masaPajak,
+        periodYear: tahunPayroll,
+        description: `Import Excel ${selectedExcelFile.name}`,
+        metadata: {
+          fileName: selectedExcelFile.name,
+          fileSize: selectedExcelFile.size,
+          totalRows: report.totalRows,
+          warningRows: report.warningRows,
+        },
+      });
     } catch (error) {
       setExportError(
         error instanceof Error ? error.message : 'Gagal membaca file Excel.'
@@ -294,6 +514,69 @@ export default function TaxelingPage() {
     } finally {
       setIsImportingExcel(false);
     }
+  };
+
+  const handleSavePayrollHistory = () => {
+    if (employeeList.length === 0) {
+      setExportError('Import data payroll terlebih dahulu sebelum menyimpan histori.');
+      return;
+    }
+
+    setExportError(null);
+    setHistoryMessage(null);
+
+    const payload = buildPayrollHistoryPayload();
+
+    startSaveHistoryTransition(() => {
+      void (async () => {
+        const result = await savePayrollPeriodHistory(payload);
+        if (result.error) {
+          setExportError(result.error);
+          return;
+        }
+
+        setHistoryMessage(result.success ?? 'Histori payroll berhasil disimpan.');
+        void recordPayrollAuditEvent({
+          eventType: 'SAVE_HISTORY',
+          companyProfile,
+          periodMonth: masaPajak,
+          periodYear: tahunPayroll,
+          description: `Simpan histori masa ${masaPajak}/${tahunPayroll}`,
+          metadata: payload.summary,
+        });
+      })();
+    });
+  };
+
+  const handleFinalizePeriod = () => {
+    if (employeeList.length === 0) {
+      setExportError('Import data payroll terlebih dahulu sebelum mengunci periode.');
+      return;
+    }
+
+    setExportError(null);
+    setPeriodLockMessage(null);
+    const payload = buildPayrollHistoryPayload();
+
+    startFinalizePeriodTransition(() => {
+      void (async () => {
+        const result = await finalizePayrollPeriod({
+          companyProfile,
+          periodMonth: masaPajak,
+          periodYear: tahunPayroll,
+          summary: payload.summary,
+          note: 'Finalized from Bulk Payroll page',
+        });
+
+        if (result.error) {
+          setExportError(result.error);
+          return;
+        }
+
+        setLockedPeriodKey(currentPeriodKey);
+        setPeriodLockMessage(result.success ?? 'Periode berhasil dikunci.');
+      })();
+    });
   };
 
   const openBpmpModal = () => {
@@ -344,6 +627,17 @@ export default function TaxelingPage() {
 
       downloadBpmpXml(xml);
       setExportError(null);
+      void recordPayrollAuditEvent({
+        eventType: 'GENERATE_XML',
+        companyProfile,
+        periodMonth: settings.taxPeriodMonth,
+        periodYear: settings.taxPeriodYear,
+        description: `Generate XML BPMP masa ${settings.taxPeriodMonth}/${settings.taxPeriodYear}`,
+        metadata: {
+          employeeCount: data.length,
+          withholdingDate: settings.withholdingDate,
+        },
+      });
       closeBpmpModal();
     } catch (error) {
       setExportError(error instanceof Error ? error.message : 'Gagal export XML.');
@@ -361,6 +655,14 @@ export default function TaxelingPage() {
 
     try {
       await downloadSlipGajiPdf(toSlipSource(emp));
+      void recordPayrollAuditEvent({
+        eventType: 'DOWNLOAD_SLIP',
+        companyProfile,
+        periodMonth: masaPajak,
+        periodYear: tahunPayroll,
+        description: `Download slip gaji ${emp.karyawan.namaLengkap}`,
+        metadata: { nik: emp.karyawan.nik },
+      });
     } catch (error) {
       setExportError(
         error instanceof Error ? error.message : 'Gagal membuat slip gaji PDF.'
@@ -385,6 +687,14 @@ export default function TaxelingPage() {
         masaPajak,
         tahunPayroll
       );
+      void recordPayrollAuditEvent({
+        eventType: 'DOWNLOAD_SLIP',
+        companyProfile,
+        periodMonth: masaPajak,
+        periodYear: tahunPayroll,
+        description: `Download ZIP slip gaji masa ${masaPajak}/${tahunPayroll}`,
+        metadata: { employeeCount: slipEligibleEmployees.length },
+      });
     } catch (error) {
       setExportError(
         error instanceof Error ? error.message : 'Gagal membuat ZIP slip gaji.'
@@ -392,6 +702,30 @@ export default function TaxelingPage() {
     } finally {
       setIsExportingAllSlip(false);
     }
+  };
+
+  const handleVariableUpdate = (
+    emp: EmployeeListItem,
+    updates: Parameters<typeof updateVariable>[2],
+    description: string
+  ) => {
+    if (isPeriodLocked) {
+      setExportError('Periode ini sudah dikunci. Perubahan nominal tidak bisa dilakukan.');
+      return;
+    }
+
+    updateVariable(emp.karyawan.nik, masaPajak, updates);
+    void recordPayrollAuditEvent({
+      eventType: 'UPDATE_VARIABLE',
+      companyProfile,
+      periodMonth: masaPajak,
+      periodYear: tahunPayroll,
+      description,
+      metadata: {
+        nik: emp.karyawan.nik,
+        updates,
+      },
+    });
   };
 
   return (
@@ -654,9 +988,9 @@ export default function TaxelingPage() {
                   <Button
                     type="button"
                     onClick={() => void importSelectedExcel()}
-                    disabled={!selectedExcelFile || isImportingExcel}
+                    disabled={!selectedExcelFile || isImportingExcel || isPeriodLocked}
                     className={`h-10 rounded-xl px-5 text-xs font-black focus-visible:ring-[#343434]/25 ${
-                      !selectedExcelFile || isImportingExcel
+                      !selectedExcelFile || isImportingExcel || isPeriodLocked
                         ? 'cursor-not-allowed bg-[#343434]/30 text-[#343434]/45'
                         : 'bg-[#343434] text-[#FFE66D] hover:bg-[#2F3061]'
                     }`}
@@ -731,9 +1065,87 @@ export default function TaxelingPage() {
           </div>
         </section>
 
+        {importValidationReport && (
+          <section className="rounded-2xl border border-[#6CA6C1]/25 bg-[#2F3061] p-5 shadow-xl shadow-black/20">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.25em] text-[#6CA6C1]">
+                  Import Validation Report
+                </div>
+                <h2 className="mt-2 text-xl font-black text-[#F7FFF7]">
+                  {importValidationReport.errors.length > 0
+                    ? 'File belum aman untuk diimport'
+                    : 'File siap untuk diproses'}
+                </h2>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-center md:grid-cols-4">
+                {[
+                  ['Rows', importValidationReport.totalRows],
+                  ['Valid', importValidationReport.validRows],
+                  ['Errors', importValidationReport.errors.length],
+                  ['Warnings', importValidationReport.warnings.length],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 py-3">
+                    <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[#F7FFF7]/45">
+                      {label}
+                    </div>
+                    <div className="mt-1 text-lg font-black text-[#FFE66D]">{value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {(importValidationReport.errors.length > 0 ||
+              importValidationReport.warnings.length > 0) && (
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {importValidationReport.errors.length > 0 && (
+                  <div className="rounded-2xl border border-[#FFE66D]/30 bg-[#FFE66D]/10 p-4">
+                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[#FFE66D]">
+                      Errors
+                    </h3>
+                    <div className="mt-3 max-h-48 space-y-2 overflow-auto text-xs text-[#F7FFF7]/80">
+                      {importValidationReport.errors.slice(0, 20).map((issue, index) => (
+                        <div key={`${issue.row}-${issue.field}-${index}`}>
+                          Baris {issue.row} - {issue.field}: {issue.message}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {importValidationReport.warnings.length > 0 && (
+                  <div className="rounded-2xl border border-[#6CA6C1]/30 bg-[#6CA6C1]/10 p-4">
+                    <h3 className="text-xs font-black uppercase tracking-[0.2em] text-[#6CA6C1]">
+                      Warnings
+                    </h3>
+                    <div className="mt-3 max-h-48 space-y-2 overflow-auto text-xs text-[#F7FFF7]/80">
+                      {importValidationReport.warnings.slice(0, 20).map((issue, index) => (
+                        <div key={`${issue.row}-${issue.field}-${index}`}>
+                          Baris {issue.row} - {issue.field}: {issue.message}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {exportError && (
           <div className="whitespace-pre-line rounded-2xl border border-[#FFE66D]/30 bg-[#FFE66D]/10 px-4 py-3 text-sm text-[#FFE66D]">
             {exportError}
+          </div>
+        )}
+
+        {historyMessage && (
+          <div className="whitespace-pre-line rounded-2xl border border-[#6CA6C1]/35 bg-[#6CA6C1]/10 px-4 py-3 text-sm font-semibold text-[#F7FFF7]">
+            {historyMessage}
+          </div>
+        )}
+
+        {periodLockMessage && (
+          <div className="whitespace-pre-line rounded-2xl border border-[#FFE66D]/35 bg-[#FFE66D]/10 px-4 py-3 text-sm font-semibold text-[#FFE66D]">
+            {periodLockMessage}
           </div>
         )}
 
@@ -744,6 +1156,32 @@ export default function TaxelingPage() {
                 Variable Matrix (Masa {masaPajak}/{tahunPayroll})
               </h2>
               <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={handleFinalizePeriod}
+                  disabled={isFinalizingPeriod || isPeriodLocked}
+                  className={`h-10 rounded-xl px-6 text-xs font-black focus-visible:ring-[#FFE66D]/30 ${
+                    isFinalizingPeriod || isPeriodLocked
+                      ? 'cursor-not-allowed bg-[#343434]/70 text-[#F7FFF7]/40'
+                      : 'border border-[#FFE66D]/50 bg-[#FFE66D]/10 text-[#FFE66D] hover:bg-[#FFE66D] hover:text-[#343434]'
+                  }`}
+                >
+                  {isPeriodLocked
+                    ? 'Periode Locked'
+                    : isFinalizingPeriod
+                      ? 'Mengunci...'
+                      : 'Finalize / Lock'}
+                </Button>
+                <Button
+                  onClick={handleSavePayrollHistory}
+                  disabled={isSavingHistory || employeeList.length === 0}
+                  className={`h-10 rounded-xl px-6 text-xs font-black focus-visible:ring-[#6CA6C1]/30 ${
+                    isSavingHistory || employeeList.length === 0
+                      ? 'cursor-not-allowed bg-[#343434]/70 text-[#F7FFF7]/40'
+                      : 'border border-[#6CA6C1]/50 bg-[#343434]/80 text-[#6CA6C1] hover:bg-[#6CA6C1] hover:text-[#343434]'
+                  }`}
+                >
+                  {isSavingHistory ? 'Menyimpan...' : 'Simpan Histori'}
+                </Button>
                 <Button
                   onClick={handleDownloadAllSlip}
                   disabled={isExportingAllSlip || slipEligibleEmployees.length === 0}
@@ -808,10 +1246,13 @@ export default function TaxelingPage() {
                               inputMode="numeric"
                               value={formatCurrencyInputValue(input.thrAtauBonus)}
                               onChange={(e) =>
-                                updateVariable(emp.karyawan.nik, masaPajak, {
-                                  bonus: parseCurrencyInput(e.target.value),
-                                })
+                                handleVariableUpdate(
+                                  emp,
+                                  { bonus: parseCurrencyInput(e.target.value) },
+                                  `Update THR/Bonus ${emp.karyawan.namaLengkap}`
+                                )
                               }
+                              disabled={isPeriodLocked}
                               className={CURRENCY_INPUT_CLASS}
                               placeholder="0"
                             />
@@ -827,10 +1268,13 @@ export default function TaxelingPage() {
                               inputMode="numeric"
                               value={formatCurrencyInputValue(input.tunjanganVariabel)}
                               onChange={(e) =>
-                                updateVariable(emp.karyawan.nik, masaPajak, {
-                                  lembur: parseCurrencyInput(e.target.value),
-                                })
+                                handleVariableUpdate(
+                                  emp,
+                                  { lembur: parseCurrencyInput(e.target.value) },
+                                  `Update lembur ${emp.karyawan.namaLengkap}`
+                                )
                               }
+                              disabled={isPeriodLocked}
                               className={CURRENCY_INPUT_CLASS}
                               placeholder="0"
                             />
@@ -1026,12 +1470,29 @@ export default function TaxelingPage() {
                         value={
                           activeEmp.karyawan.subjekPajakSejakAwalTahun ? 'YA' : 'TIDAK'
                         }
-                        onValueChange={(value) =>
+                        disabled={isPeriodLocked}
+                        onValueChange={(value) => {
+                          if (isPeriodLocked) {
+                            setExportError('Periode ini sudah dikunci. Status pajak tidak bisa diubah.');
+                            return;
+                          }
+
                           setSubjekPajakSejakAwalTahun(
                             activeEmp.karyawan.nik,
                             value === 'YA'
-                          )
-                        }
+                          );
+                          void recordPayrollAuditEvent({
+                            eventType: 'UPDATE_VARIABLE',
+                            companyProfile,
+                            periodMonth: masaPajak,
+                            periodYear: tahunPayroll,
+                            description: `Update status subjek pajak ${activeEmp.karyawan.namaLengkap}`,
+                            metadata: {
+                              nik: activeEmp.karyawan.nik,
+                              subjekPajakSejakAwalTahun: value === 'YA',
+                            },
+                          });
+                        }}
                       >
                         <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
                           <SelectValue placeholder="Pilih status subjek pajak" />
@@ -1114,14 +1575,32 @@ export default function TaxelingPage() {
                                       value={formatCurrencyInputValue(row.overrideValue, {
                                         emptyZero: false,
                                       })}
-                                      onChange={(e) =>
+                                      onChange={(e) => {
+                                        if (isPeriodLocked) {
+                                          setExportError('Periode ini sudah dikunci. Override tidak bisa diubah.');
+                                          return;
+                                        }
+
                                         setNominalOverride(
                                           activeEmp.karyawan.nik,
                                           masaPajak,
                                           row.key,
                                           parseNullableCurrencyInput(e.target.value)
-                                        )
-                                      }
+                                        );
+                                        void recordPayrollAuditEvent({
+                                          eventType: 'UPDATE_OVERRIDE',
+                                          companyProfile,
+                                          periodMonth: masaPajak,
+                                          periodYear: tahunPayroll,
+                                          description: `Update override ${row.label} - ${activeEmp.karyawan.namaLengkap}`,
+                                          metadata: {
+                                            nik: activeEmp.karyawan.nik,
+                                            key: row.key,
+                                            value: parseNullableCurrencyInput(e.target.value),
+                                          },
+                                        });
+                                      }}
+                                      disabled={isPeriodLocked}
                                       className={CURRENCY_INPUT_CLASS}
                                     />
                                   </div>
@@ -1132,15 +1611,32 @@ export default function TaxelingPage() {
                                 <TableCell className="p-3 text-center">
                                   <Button
                                     type="button"
-                                    onClick={() =>
+                                    onClick={() => {
+                                      if (isPeriodLocked) {
+                                        setExportError('Periode ini sudah dikunci. Override tidak bisa direset.');
+                                        return;
+                                      }
+
                                       setNominalOverride(
                                         activeEmp.karyawan.nik,
                                         masaPajak,
                                         row.key,
                                         null
-                                      )
-                                    }
-                                    disabled={!isOverridden}
+                                      );
+                                      void recordPayrollAuditEvent({
+                                        eventType: 'UPDATE_OVERRIDE',
+                                        companyProfile,
+                                        periodMonth: masaPajak,
+                                        periodYear: tahunPayroll,
+                                        description: `Reset override ${row.label} - ${activeEmp.karyawan.namaLengkap}`,
+                                        metadata: {
+                                          nik: activeEmp.karyawan.nik,
+                                          key: row.key,
+                                          reset: true,
+                                        },
+                                      });
+                                    }}
+                                    disabled={!isOverridden || isPeriodLocked}
                                     className={`h-9 rounded-lg px-3 text-[11px] font-bold focus-visible:ring-[#6CA6C1]/30 ${
                                       isOverridden
                                         ? 'bg-[#6CA6C1] text-[#343434]'

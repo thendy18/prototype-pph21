@@ -45,7 +45,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
               <GalleryVerticalEnd className="size-5" />
             </div>
             <div>
-              <div className="text-sm leading-none">Payroll Coretax</div>
+              <div className="text-sm leading-none">Taxeling</div>
               <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-[#6CA6C1]">
                 Internal Payroll
               </div>

@@ -5,9 +5,9 @@ import { getCurrentUserProfile } from "../lib/auth";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppSidebar } from "@/components/app-sidebar";
+import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,7 +20,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Payroll Coretax",
+  title: "Taxeling",
   description: "Internal payroll and PPh21 management",
 };
 
@@ -50,21 +50,7 @@ export default async function RootLayout({
                       orientation="vertical"
                       className="mr-2 bg-[#6CA6C1]/30 data-[orientation=vertical]:h-4"
                     />
-                    <Breadcrumb>
-                      <BreadcrumbList className="text-[#F7FFF7]/60">
-                        <BreadcrumbItem className="hidden md:block">
-                          <BreadcrumbLink href="/bulk" className="hover:text-[#FFE66D]">
-                            Payroll Coretax
-                          </BreadcrumbLink>
-                        </BreadcrumbItem>
-                        <BreadcrumbSeparator className="hidden text-[#6CA6C1]/70 md:block" />
-                        <BreadcrumbItem>
-                          <BreadcrumbPage className="font-semibold text-[#F7FFF7]">
-                            Payroll Workspace
-                          </BreadcrumbPage>
-                        </BreadcrumbItem>
-                      </BreadcrumbList>
-                    </Breadcrumb>
+                    <AppBreadcrumb />
                   </div>
                 </header>
                 {children}
