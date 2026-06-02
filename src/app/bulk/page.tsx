@@ -1464,7 +1464,7 @@ export default function TaxelingPage() {
                   <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 p-4">
                     <Field className="space-y-3">
                       <FieldLabel className={SETTINGS_LABEL_CLASS}>
-                        Subjek Pajak Sejak Awal Tahun
+                        Karyawan merupakan Subjek Pajak Dalam Negeri Sejak Awal Tahun?
                       </FieldLabel>
                       <Select
                         value={
@@ -1512,9 +1512,8 @@ export default function TaxelingPage() {
                         </SelectContent>
                       </Select>
                       <p className="text-[11px] leading-relaxed text-[#F7FFF7]/55">
-                        YA berarti neto tidak disetahunkan hanya karena karyawan mulai bekerja di tengah
-                        tahun. TIDAK dipakai untuk kasus khusus seperti subjek pajak yang baru dimulai
-                        setelah awal tahun.
+                        Pilih YA untuk sebagian besar karyawan (WNI maupun WNA) yang memang sudah tinggal di Indonesia sejak sebelum 1 Januari. Gaji mereka TIDAK akan disetahunkan meskipun mereka baru bergabung dengan perusahaan di tengah tahun.
+                        Pilih TIDAK hanya untuk kasus: WNA yang baru saja pindah ke Indonesia, atau WNI yang baru pulang menetap dari luar negeri setelah tanggal 1 Januari. Gaji mereka akan disetahunkan.
                       </p>
                     </Field>
                   </div>
