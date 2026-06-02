@@ -390,6 +390,47 @@ function readTransactionPeriodMonth(row: Record<string, unknown>): number {
   );
 }
 
+function parseMonthFromIsoDate(value: unknown): number | null {
+  const normalized = parseIsoDateCell(value);
+  if (!normalized || !isValidIsoDate(normalized)) return null;
+  const month = Number(normalized.slice(5, 7));
+  return month >= 1 && month <= 12 ? month : null;
+}
+
+function readPayrollStartMonth(row: Record<string, unknown>, fallback: number): number {
+  const explicitMonth = bacaString(
+    row,
+    'Bln Mulai',
+    'Bulan Mulai',
+    'Bulan Masuk',
+    'Bulan Mulai Kerja'
+  );
+  if (explicitMonth) return clampMonth(explicitMonth, fallback);
+
+  return parseMonthFromIsoDate(
+    row['Tanggal Mulai Kerja'] ??
+      row['Tanggal Masuk'] ??
+      row['Tanggal Bergabung']
+  ) ?? fallback;
+}
+
+function readPayrollEndMonth(row: Record<string, unknown>, fallback: number): number {
+  const explicitMonth = bacaString(
+    row,
+    'Bln Selesai',
+    'Bulan Selesai',
+    'Bulan Keluar',
+    'Bulan Akhir Kerja'
+  );
+  if (explicitMonth) return clampMonth(explicitMonth, fallback);
+
+  return parseMonthFromIsoDate(
+    row['Tanggal Selesai Kerja'] ??
+      row['Tanggal Keluar'] ??
+      row['Tanggal Resign']
+  ) ?? fallback;
+}
+
 function parseNoPaspor(
   row: Record<string, unknown>,
   residentStatus: ResidentStatus
@@ -703,31 +744,61 @@ function createInitialStoreState() {
 function createMonthlyInputsFromTransaction(
   row: Record<string, unknown>,
   config: KonfigurasiTarif,
-  activeMonth: number
+  activeMonth: number,
+  tipeKaryawan: TipeKaryawan
 ): Record<number, InputGajiBulanan> {
   const monthlyInputs: Record<number, InputGajiBulanan> = {};
   const bruto = floorRupiah(
     row['Bruto'] ?? row['Gross'] ?? row['Total Bruto'] ?? row['Penghasilan Bruto']
   );
+  const tunjanganTetapUmum = floorRupiah(row['Tunjangan Tetap']);
+  const tunjanganRincian =
+    floorRupiah(row['Tunjangan Jabatan']) +
+    floorRupiah(row['Tunj Transport']) +
+    floorRupiah(row['Tunjangan Makan']);
+  const totalTunjanganTetap = tunjanganTetapUmum + tunjanganRincian;
+  const gajiPokokTetap = floorRupiah(row['Gaji Pokok']);
 
   for (let bulan = 1; bulan <= 12; bulan += 1) {
+    const isNonPegawaiActiveMonth =
+      tipeKaryawan === 'NON_PEGAWAI' && bulan === activeMonth;
+    const isPegawaiTetap = tipeKaryawan === 'TETAP';
+
     monthlyInputs[bulan] = {
       bulan,
-      gajiPokok: bulan === activeMonth ? bruto : 0,
-      tunjanganTetap: 0,
+      gajiPokok: isPegawaiTetap
+        ? gajiPokokTetap || Math.max(bruto - totalTunjanganTetap, 0)
+        : isNonPegawaiActiveMonth
+          ? bruto
+          : 0,
+      tunjanganTetap: isPegawaiTetap ? totalTunjanganTetap : 0,
       tunjanganVariabel: 0,
       thrAtauBonus: 0,
-      naturaTaxable: 0,
-      premiAsuransiSwastaPerusahaan: 0,
-      iuranPensiunPerusahaan: 0,
-      iuranPensiunKaryawan: 0,
-      dplkPerusahaan: 0,
-      dplkKaryawan: 0,
+      naturaTaxable: isPegawaiTetap
+        ? floorRupiah(row['Natura'] ?? row['Natura Taxable'])
+        : 0,
+      premiAsuransiSwastaPerusahaan: isPegawaiTetap
+        ? floorRupiah(row['Premi Asuransi Swasta Perusahaan'])
+        : 0,
+      iuranPensiunPerusahaan: isPegawaiTetap
+        ? floorRupiah(row['Iuran Pensiun Perusahaan'])
+        : 0,
+      iuranPensiunKaryawan: isPegawaiTetap
+        ? floorRupiah(row['Iuran Pensiun Karyawan'])
+        : 0,
+      dplkPerusahaan: isPegawaiTetap
+        ? floorRupiah(row['DPLK Perusahaan'])
+        : 0,
+      dplkKaryawan: isPegawaiTetap
+        ? floorRupiah(row['DPLK Karyawan'])
+        : 0,
       zakat: 0,
-      dasarUpahBpjs: undefined,
+      dasarUpahBpjs: isPegawaiTetap
+        ? floorRupiah(row['Dasar Upah BPJS']) || undefined
+        : undefined,
       overrideBpjsPerusahaan: undefined,
       overrideBpjsKaryawan: undefined,
-      originalTunjangan: 0,
+      originalTunjangan: isPegawaiTetap ? totalTunjanganTetap : 0,
       isOverridden: false,
       konfigurasiTarif: config,
     };
@@ -788,8 +859,17 @@ function buildEmployeesFromTransactionRows(
     }
 
     const periodMonth = readTransactionPeriodMonth(row);
+    const bulanMulai = tipeKaryawan === 'TETAP'
+      ? readPayrollStartMonth(row, periodMonth)
+      : periodMonth;
+    const bulanSelesai = tipeKaryawan === 'TETAP'
+      ? readPayrollEndMonth(row, 12)
+      : periodMonth;
+    const bulanSelesaiFinal = bulanSelesai < bulanMulai ? bulanMulai : bulanSelesai;
     const residentStatus = parseResidentStatus(row);
     const statusIdentitas = parseStatusIdentitas(row);
+    const subjekPajakSejakAwalTahun =
+      parseSubjekPajakSejakAwalTahun(row);
     const counterpartTinRaw = bacaString(row, 'Counterpart TIN', 'CounterpartTin');
     const counterpartTin = counterpartTinRaw
       ? sanitizeFixedDigits(counterpartTinRaw, 16)
@@ -803,12 +883,14 @@ function buildEmployeesFromTransactionRows(
 
     const fasilitasPajak = parseFasilitasPajak(row);
     const documentNumber = bacaString(row, 'DocumentNumber', 'Document Number', 'Nomor Dokumen');
-    const idKaryawan = makeTransactionEmployeeId(
-      nik,
-      periodMonth,
-      excelRowNumber,
-      documentNumber
-    );
+    const idKaryawan = tipeKaryawan === 'TETAP'
+      ? nik
+      : makeTransactionEmployeeId(
+          nik,
+          periodMonth,
+          excelRowNumber,
+          documentNumber
+        );
 
     const karyawan: DataKaryawan = {
       idKaryawan,
@@ -819,9 +901,9 @@ function buildEmployeesFromTransactionRows(
       metodePajak,
       residentStatus,
       tipeKaryawan,
-      bulanMulai: periodMonth,
-      bulanSelesai: periodMonth,
-      subjekPajakSejakAwalTahun: true,
+      bulanMulai,
+      bulanSelesai: bulanSelesaiFinal,
+      subjekPajakSejakAwalTahun,
       jabatan: bacaString(row, 'Jabatan') || undefined,
       counterpartTin: counterpartTin ?? nik,
       temporaryTin: bacaString(row, 'Temporary TIN') || undefined,
@@ -886,7 +968,12 @@ function buildEmployeesFromTransactionRows(
 
     const empTemplate: EmployeeData = {
       karyawan,
-      monthlyInputs: createMonthlyInputsFromTransaction(row, config, periodMonth),
+      monthlyInputs: createMonthlyInputsFromTransaction(
+        row,
+        config,
+        periodMonth,
+        tipeKaryawan
+      ),
       monthlyHasils: {} as Record<number, HasilKalkulasiTetap>,
     };
 
