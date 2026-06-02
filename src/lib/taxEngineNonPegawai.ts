@@ -228,7 +228,7 @@ export function hitungPajakNonPegawai(
   let hasilDasar = hitungPajakDasar(input, totalPendapatan);
   let tunjanganPajakGrossUp = 0;
 
-  if (input.metodePajak === 'GROSS_UP') {
+  if (input.metodePajak === 'GROSS_UP' && input.taxCertificate !== 'TaxExAr21') {
     const hasilGrossUp = hitungGrossUp(input, totalPendapatan);
     hasilDasar = hasilGrossUp.hasil;
     tunjanganPajakGrossUp = hasilGrossUp.tunjanganPajak;
@@ -242,6 +242,22 @@ export function hitungPajakNonPegawai(
   }
 
   buatLogRincianPajak(log, hasilDasar, statusIdentitas);
+
+  if (input.taxCertificate === 'TaxExAr21') {
+    hasilDasar = {
+      ...hasilDasar,
+      rateEfektif: 0,
+      pajakNormal: 0,
+      pajakFinal: 0,
+    };
+
+    log.push({
+      langkah: '5a',
+      deskripsi: 'Fasilitas TaxExAr21 diterapkan',
+      nilai: 0,
+      rumus: 'Pajak dipotong menjadi 0 karena fasilitas pembebasan',
+    });
+  }
 
   let pajakDipotongDariPenerima = 0;
   let pajakDitanggungPemberi = 0;

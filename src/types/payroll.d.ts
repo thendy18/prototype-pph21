@@ -23,13 +23,18 @@ export type MetodePajak = 'GROSS' | 'NET' | 'GROSS_UP';
 
 export type ResidentStatus = 'RESIDENT' | 'NON_RESIDENT';
 
-export type TipeKaryawan = 'TETAP' | 'NON_PEGAWAI';
+export type TipeKaryawan = 'TETAP' | 'NON_PEGAWAI' | 'PEGAWAI_TIDAK_TETAP';
+
+export type JenisPenerimaPenghasilan =
+  | 'PEGAWAI_TETAP'
+  | 'BUKAN_PEGAWAI'
+  | 'PEGAWAI_TIDAK_TETAP';
 
 export type KategoriTER = 'A' | 'B' | 'C';
 
 export type PasalPemotongan = 'PPh21' | 'PPh26';
 
-export type FasilitasPajak = 'N/A' | 'SKB' | 'DTP' | 'SKD' | 'ETC';
+export type FasilitasPajak = 'N/A' | 'SKB' | 'DTP' | 'SKD' | 'ETC' | 'TaxExAr21';
 
 export type BasisUpahBpjs =
   | 'GAJI_POKOK'
@@ -73,6 +78,17 @@ export interface DataPerusahaan {
   namaPerusahaan: string;
 }
 
+export interface Bp21Metadata {
+  taxObjectCode: string;
+  deemedPersentase: number;
+  documentType: string;
+  documentNumber: string;
+  documentDate: string;
+  withholdingDate?: string;
+  idTkuPenerima: string;
+  taxCertificate?: FasilitasPajak;
+}
+
 export interface DataKaryawan {
   idKaryawan: string;
   nik: string; // 16 digit NIK / counterpart default
@@ -92,6 +108,7 @@ export interface DataKaryawan {
   temporaryTin?: string;
   noPaspor: string | null;
   fasilitasPajak: FasilitasPajak;
+  bp21?: Bp21Metadata;
 
   // Legacy bridge agar migrasi file lain bisa bertahap
   adaNPWP?: boolean;
@@ -244,8 +261,11 @@ export interface InputNonPegawai {
   // Opsional untuk BP21 / XML ke depan
   deemedPersentase?: number;
   kodeObjekPajak?: string;
+  jenisDokumen?: string;
   nomorDokumen?: string;
   tanggalDokumen?: string;
+  tanggalPemotongan?: string;
+  taxCertificate?: FasilitasPajak;
 
   // Legacy bridge
   adaNPWP?: boolean;

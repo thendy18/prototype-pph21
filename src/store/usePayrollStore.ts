@@ -207,8 +207,33 @@ function isRowEmpty(row: Record<string, unknown>): boolean {
 
 function parseTipeKaryawan(row: Record<string, unknown>): TipeKaryawan {
   const tipeRaw = bacaString(row, 'Tipe', 'TIPE', 'Jenis Karyawan').toUpperCase();
+  if (tipeRaw.includes('TIDAK') && tipeRaw.includes('TETAP')) {
+    return 'PEGAWAI_TIDAK_TETAP';
+  }
   if (tipeRaw.includes('NON')) return 'NON_PEGAWAI';
+  if (tipeRaw.includes('BUKAN')) return 'NON_PEGAWAI';
   return 'TETAP';
+}
+
+function parseJenisPenerima(row: Record<string, unknown>): TipeKaryawan {
+  const raw = bacaString(
+    row,
+    'Jenis Penerima',
+    'Jenis Penerima Penghasilan',
+    'jenis_penerima'
+  ).toUpperCase();
+
+  if (raw.includes('TIDAK') && raw.includes('TETAP')) {
+    return 'PEGAWAI_TIDAK_TETAP';
+  }
+  if (raw.includes('BUKAN') || raw.includes('NON')) {
+    return 'NON_PEGAWAI';
+  }
+  if (raw.includes('TETAP')) {
+    return 'TETAP';
+  }
+
+  return parseTipeKaryawan(row);
 }
 
 function parseStatusIdentitas(row: Record<string, unknown>): StatusIdentitasPajak {
@@ -290,7 +315,8 @@ function parseStatusPtkp(
 }
 
 function parseFasilitasPajak(row: Record<string, unknown>): FasilitasPajak {
-  const raw = bacaString(row, ...FASILITAS_PAJAK_KEYS).toUpperCase();
+  const rawValue = bacaString(row, ...FASILITAS_PAJAK_KEYS);
+  const raw = rawValue.toUpperCase();
 
   if (
     raw === 'N/A' ||
@@ -302,7 +328,66 @@ function parseFasilitasPajak(row: Record<string, unknown>): FasilitasPajak {
     return raw;
   }
 
+  if (raw === 'TAXEXAR21') {
+    return 'TaxExAr21';
+  }
+
   return 'N/A';
+}
+
+function hasTransactionHeader(row: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(row, 'Jenis Penerima') ||
+    Object.prototype.hasOwnProperty.call(row, 'Jenis Penerima Penghasilan') ||
+    Object.prototype.hasOwnProperty.call(row, 'jenis_penerima');
+}
+
+function isTransactionImport(rows: Record<string, unknown>[]): boolean {
+  return rows.some((row) => hasTransactionHeader(row));
+}
+
+function isValidIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [yearText, monthText, dayText] = value.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() + 1 === month &&
+    parsed.getUTCDate() === day
+  );
+}
+
+function parseIsoDateCell(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = `${value.getMonth() + 1}`.padStart(2, '0');
+    const day = `${value.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  const raw = coerceCellToString(value);
+  if (!raw) return '';
+  if (isValidIsoDate(raw)) return raw;
+
+  const slashMatch = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (!slashMatch) return raw;
+
+  const [, dayText, monthText, yearText] = slashMatch;
+  const normalized = `${yearText}-${monthText.padStart(2, '0')}-${dayText.padStart(2, '0')}`;
+  return isValidIsoDate(normalized) ? normalized : raw;
+}
+
+function readTransactionPeriodMonth(row: Record<string, unknown>): number {
+  return clampMonth(
+    bacaString(row, 'Periode Bulan', 'TaxPeriodMonth', 'Masa Pajak') ||
+      row['Periode Bulan'] ||
+      row['TaxPeriodMonth'] ||
+      row['Masa Pajak'],
+    1
+  );
 }
 
 function parseNoPaspor(
@@ -547,6 +632,13 @@ function calculateFullYear(
         statusIdentitas: emp.karyawan.statusIdentitas,
         residentStatus: emp.karyawan.residentStatus,
         metodePajak: emp.karyawan.metodePajak,
+        deemedPersentase: emp.karyawan.bp21?.deemedPersentase,
+        kodeObjekPajak: emp.karyawan.bp21?.taxObjectCode,
+        jenisDokumen: emp.karyawan.bp21?.documentType,
+        nomorDokumen: emp.karyawan.bp21?.documentNumber,
+        tanggalDokumen: emp.karyawan.bp21?.documentDate,
+        tanggalPemotongan: emp.karyawan.bp21?.withholdingDate,
+        taxCertificate: emp.karyawan.bp21?.taxCertificate ?? emp.karyawan.fasilitasPajak,
         adaNPWP: emp.karyawan.adaNPWP,
       };
       const hasilNP = hitungPajakNonPegawai(inputNonPegawai);
@@ -608,6 +700,207 @@ function createInitialStoreState() {
   };
 }
 
+function createMonthlyInputsFromTransaction(
+  row: Record<string, unknown>,
+  config: KonfigurasiTarif,
+  activeMonth: number
+): Record<number, InputGajiBulanan> {
+  const monthlyInputs: Record<number, InputGajiBulanan> = {};
+  const bruto = floorRupiah(
+    row['Bruto'] ?? row['Gross'] ?? row['Total Bruto'] ?? row['Penghasilan Bruto']
+  );
+
+  for (let bulan = 1; bulan <= 12; bulan += 1) {
+    monthlyInputs[bulan] = {
+      bulan,
+      gajiPokok: bulan === activeMonth ? bruto : 0,
+      tunjanganTetap: 0,
+      tunjanganVariabel: 0,
+      thrAtauBonus: 0,
+      naturaTaxable: 0,
+      premiAsuransiSwastaPerusahaan: 0,
+      iuranPensiunPerusahaan: 0,
+      iuranPensiunKaryawan: 0,
+      dplkPerusahaan: 0,
+      dplkKaryawan: 0,
+      zakat: 0,
+      dasarUpahBpjs: undefined,
+      overrideBpjsPerusahaan: undefined,
+      overrideBpjsKaryawan: undefined,
+      originalTunjangan: 0,
+      isOverridden: false,
+      konfigurasiTarif: config,
+    };
+  }
+
+  return monthlyInputs;
+}
+
+function makeTransactionEmployeeId(
+  nik: string,
+  periodMonth: number,
+  excelRowNumber: number,
+  documentNumber: string
+): string {
+  const safeDocument = documentNumber.replace(/[^a-zA-Z0-9]/g, '').slice(-12);
+  return `${nik}-${periodMonth}-${excelRowNumber}-${safeDocument || 'TX'}`;
+}
+
+function buildEmployeesFromTransactionRows(
+  rows: Record<string, unknown>[],
+  config: KonfigurasiTarif
+): Record<string, EmployeeData> {
+  const newEmployees: Record<string, EmployeeData> = {};
+  const validationErrors: string[] = [];
+
+  rows.forEach((row, index) => {
+    const excelRowNumber = index + 2;
+    if (isRowEmpty(row)) return;
+
+    const tipeKaryawan = parseJenisPenerima(row);
+    if (tipeKaryawan === 'PEGAWAI_TIDAK_TETAP') {
+      validationErrors.push(
+        `Baris ${excelRowNumber}: Pegawai Tidak Tetap belum didukung pada v1.`
+      );
+      return;
+    }
+
+    const rawNik = bacaString(row, 'NIK', 'Nik');
+    const nik = sanitizeFixedDigits(rawNik, 16);
+    if (!rawNik) {
+      validationErrors.push(`Baris ${excelRowNumber}: NIK wajib diisi.`);
+      return;
+    }
+    if (!nik) {
+      validationErrors.push(
+        `Baris ${excelRowNumber}: NIK harus tepat 16 digit angka.`
+      );
+      return;
+    }
+
+    const metodePajakRaw = bacaString(row, ...METODE_PAJAK_KEYS);
+    const metodePajak = parseMetodePajak(metodePajakRaw);
+    if (!metodePajak) {
+      validationErrors.push(
+        `Baris ${excelRowNumber}: Metode Pajak harus GROSS, NET, atau GROSS_UP.`
+      );
+      return;
+    }
+
+    const periodMonth = readTransactionPeriodMonth(row);
+    const residentStatus = parseResidentStatus(row);
+    const statusIdentitas = parseStatusIdentitas(row);
+    const counterpartTinRaw = bacaString(row, 'Counterpart TIN', 'CounterpartTin');
+    const counterpartTin = counterpartTinRaw
+      ? sanitizeFixedDigits(counterpartTinRaw, 16)
+      : nik;
+    if (counterpartTinRaw && !counterpartTin) {
+      validationErrors.push(
+        `Baris ${excelRowNumber}: Counterpart TIN harus tepat 16 digit angka.`
+      );
+      return;
+    }
+
+    const fasilitasPajak = parseFasilitasPajak(row);
+    const documentNumber = bacaString(row, 'DocumentNumber', 'Document Number', 'Nomor Dokumen');
+    const idKaryawan = makeTransactionEmployeeId(
+      nik,
+      periodMonth,
+      excelRowNumber,
+      documentNumber
+    );
+
+    const karyawan: DataKaryawan = {
+      idKaryawan,
+      nik,
+      namaLengkap: bacaString(row, 'Nama', 'Nama Penerima') || 'Tanpa Nama',
+      statusPtkp: parseStatusPtkp(row, tipeKaryawan),
+      statusIdentitas,
+      metodePajak,
+      residentStatus,
+      tipeKaryawan,
+      bulanMulai: periodMonth,
+      bulanSelesai: periodMonth,
+      subjekPajakSejakAwalTahun: true,
+      jabatan: bacaString(row, 'Jabatan') || undefined,
+      counterpartTin: counterpartTin ?? nik,
+      temporaryTin: bacaString(row, 'Temporary TIN') || undefined,
+      noPaspor: parseNoPaspor(row, residentStatus),
+      fasilitasPajak,
+      adaNPWP: statusIdentitas === 'NPWP' || statusIdentitas === 'NIK_VALID',
+    };
+
+    if (tipeKaryawan === 'NON_PEGAWAI') {
+      const taxObjectCode = bacaString(row, 'TaxObjectCode', 'Tax Object Code', 'Kode Objek Pajak');
+      const documentType = bacaString(row, 'Document', 'Jenis Dokumen');
+      const documentDate = parseIsoDateCell(
+        row['DocumentDate'] ?? row['Document Date'] ?? row['Tanggal Dokumen']
+      );
+      const withholdingDate = parseIsoDateCell(
+        row['WithholdingDate'] ?? row['Withholding Date'] ?? row['Tanggal Pemotongan']
+      );
+      const idTkuPenerimaRaw = bacaString(
+        row,
+        'ID TKU Penerima',
+        'IDPlaceOfBusinessActivityOfIncomeRecipient',
+        'ID TKU'
+      );
+      const idTkuPenerima = sanitizeFixedDigits(idTkuPenerimaRaw, 22);
+
+      if (!taxObjectCode) {
+        validationErrors.push(`Baris ${excelRowNumber}: TaxObjectCode wajib diisi untuk BP21.`);
+      }
+      if (!documentType) {
+        validationErrors.push(`Baris ${excelRowNumber}: Document wajib diisi untuk BP21.`);
+      }
+      if (!documentNumber) {
+        validationErrors.push(`Baris ${excelRowNumber}: DocumentNumber wajib diisi untuk BP21.`);
+      }
+      if (!documentDate || !isValidIsoDate(documentDate)) {
+        validationErrors.push(
+          `Baris ${excelRowNumber}: DocumentDate wajib berformat YYYY-MM-DD untuk BP21.`
+        );
+      }
+      if (!idTkuPenerimaRaw || !idTkuPenerima) {
+        validationErrors.push(
+          `Baris ${excelRowNumber}: ID TKU Penerima harus tepat 22 digit angka untuk BP21.`
+        );
+      }
+      if (withholdingDate && !isValidIsoDate(withholdingDate)) {
+        validationErrors.push(
+          `Baris ${excelRowNumber}: WithholdingDate harus berformat YYYY-MM-DD.`
+        );
+      }
+
+      karyawan.bp21 = {
+        taxObjectCode,
+        deemedPersentase: floorRupiah(row['Deemed'] ?? row['Deemed Persentase']) || 50,
+        documentType,
+        documentNumber,
+        documentDate,
+        withholdingDate: withholdingDate || undefined,
+        idTkuPenerima: idTkuPenerima ?? '',
+        taxCertificate: fasilitasPajak,
+      };
+    }
+
+    const empTemplate: EmployeeData = {
+      karyawan,
+      monthlyInputs: createMonthlyInputsFromTransaction(row, config, periodMonth),
+      monthlyHasils: {} as Record<number, HasilKalkulasiTetap>,
+    };
+
+    empTemplate.monthlyHasils = calculateFullYear(empTemplate, config);
+    newEmployees[idKaryawan] = empTemplate;
+  });
+
+  if (validationErrors.length > 0) {
+    throw new Error(validationErrors.join('\n'));
+  }
+
+  return newEmployees;
+}
+
 export const usePayrollStore = create<PayrollStore>((set, get) => ({
   ...createInitialStoreState(),
 
@@ -647,6 +940,12 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
 
   importExcel: (rows) =>
     set((state) => {
+      if (isTransactionImport(rows)) {
+        return {
+          employees: buildEmployeesFromTransactionRows(rows, state.configBpjs),
+        };
+      }
+
       const newEmployees: Record<string, EmployeeData> = {};
       const validationErrors: string[] = [];
 

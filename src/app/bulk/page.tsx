@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import * as XLSX from 'xlsx';
 import {
   finalizePayrollPeriod,
@@ -9,7 +9,9 @@ import {
   savePayrollPeriodHistory,
 } from '../../actions/payrollHistoryActions';
 import {
+  downloadBp21Xml,
   downloadBpmpXml,
+  generateBp21Xml,
   generateBpmpXml,
   type BpmpGlobalSettings,
 } from '../../actions/exportXML';
@@ -140,6 +142,8 @@ type BpmpModalSettings = Omit<BpmpGlobalSettings, 'withholdingDate' | 'strict'> 
   withholdingDate: string;
 };
 
+type EmployeeFilter = 'ALL' | 'TETAP' | 'NON_PEGAWAI' | 'NEEDS_REVIEW';
+
 type ImportValidationIssue = {
   row: number;
   field: string;
@@ -174,12 +178,57 @@ function isEmptyExcelRow(row: Record<string, unknown>): boolean {
   return Object.values(row).every((value) => String(value ?? '').trim() === '');
 }
 
+function hasTransactionHeader(row: Record<string, unknown>): boolean {
+  return (
+    Object.prototype.hasOwnProperty.call(row, 'Jenis Penerima') ||
+    Object.prototype.hasOwnProperty.call(row, 'Jenis Penerima Penghasilan') ||
+    Object.prototype.hasOwnProperty.call(row, 'jenis_penerima')
+  );
+}
+
+function isTransactionImport(rows: Record<string, unknown>[]): boolean {
+  return rows.some((row) => hasTransactionHeader(row));
+}
+
+function normalizeJenisPenerima(row: Record<string, unknown>): string {
+  return readCell(row, 'Jenis Penerima', 'Jenis Penerima Penghasilan', 'jenis_penerima')
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+}
+
+function normalizeExcelDate(value: unknown): string {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = `${value.getMonth() + 1}`.padStart(2, '0');
+    const day = `${value.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  return String(value ?? '').trim();
+}
+
+function isValidIsoDateText(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [yearText, monthText, dayText] = value.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() + 1 === month &&
+    parsed.getUTCDate() === day
+  );
+}
+
 function buildImportValidationReport(
   rows: Record<string, unknown>[]
 ): ImportValidationReport {
   const errors: ImportValidationIssue[] = [];
   const warnings: ImportValidationIssue[] = [];
   const rowStatus = new Map<number, { hasError: boolean; hasWarning: boolean }>();
+  const transactionMode = isTransactionImport(rows);
   let totalRows = 0;
 
   const mark = (row: number, type: 'error' | 'warning') => {
@@ -209,6 +258,15 @@ function buildImportValidationReport(
     if (!nik) addError('NIK', 'NIK wajib diisi.');
     else if (digitsOnly(nik).length !== 16) addError('NIK', 'NIK harus tepat 16 digit angka.');
 
+    if (transactionMode) {
+      const jenisPenerima = normalizeJenisPenerima(row);
+      if (!jenisPenerima) {
+        addError('Jenis Penerima', 'Jenis Penerima wajib diisi untuk template transaksi.');
+      } else if (jenisPenerima.includes('TIDAK') && jenisPenerima.includes('TETAP')) {
+        addError('Jenis Penerima', 'Pegawai Tidak Tetap disiapkan untuk fase berikutnya dan belum dihitung pada v1.');
+      }
+    }
+
     const metodePajak = readCell(row, 'Metode Pajak', 'Metode', 'Tax Method').toUpperCase();
     if (!metodePajak) addError('Metode Pajak', 'Metode Pajak wajib diisi.');
     else if (!['GROSS', 'NET', 'GROSS_UP'].includes(metodePajak)) {
@@ -227,8 +285,40 @@ function buildImportValidationReport(
     }
 
     const fasilitasPajak = readCell(row, 'Fasilitas Pajak', 'Tax Certificate', 'TaxCertificate');
-    if (fasilitasPajak && !['N/A', 'SKB', 'DTP', 'SKD', 'ETC'].includes(fasilitasPajak.toUpperCase())) {
+    if (fasilitasPajak && !['N/A', 'SKB', 'DTP', 'SKD', 'ETC', 'TAXEXAR21'].includes(fasilitasPajak.toUpperCase())) {
       addWarning('Fasilitas Pajak', 'Nilai tidak dikenal dan akan default ke N/A.');
+    }
+
+    if (transactionMode) {
+      const jenisPenerima = normalizeJenisPenerima(row);
+      const isBp21Row = jenisPenerima.includes('BUKAN') || jenisPenerima.includes('NON');
+
+      if (isBp21Row) {
+        const taxObjectCode = readCell(row, 'TaxObjectCode', 'Tax Object Code', 'Kode Objek Pajak');
+        const document = readCell(row, 'Document', 'Jenis Dokumen');
+        const documentNumber = readCell(row, 'DocumentNumber', 'Document Number', 'Nomor Dokumen');
+        const documentDate = normalizeExcelDate(row['DocumentDate'] ?? row['Document Date'] ?? row['Tanggal Dokumen']);
+        const withholdingDate = normalizeExcelDate(row['WithholdingDate'] ?? row['Withholding Date'] ?? row['Tanggal Pemotongan']);
+        const idTkuPenerima = readCell(
+          row,
+          'ID TKU Penerima',
+          'IDPlaceOfBusinessActivityOfIncomeRecipient',
+          'ID TKU'
+        );
+
+        if (!taxObjectCode) addError('TaxObjectCode', 'TaxObjectCode wajib diisi untuk BP21.');
+        if (!document) addError('Document', 'Document wajib diisi untuk BP21.');
+        if (!documentNumber) addError('DocumentNumber', 'DocumentNumber wajib diisi untuk BP21.');
+        if (!documentDate || !isValidIsoDateText(documentDate)) {
+          addError('DocumentDate', 'DocumentDate wajib berformat YYYY-MM-DD untuk BP21.');
+        }
+        if (!idTkuPenerima || digitsOnly(idTkuPenerima).length !== 22) {
+          addError('ID TKU Penerima', 'ID TKU Penerima harus tepat 22 digit angka untuk BP21.');
+        }
+        if (withholdingDate && !isValidIsoDateText(withholdingDate)) {
+          addError('WithholdingDate', 'WithholdingDate harus berformat YYYY-MM-DD.');
+        }
+      }
     }
   });
 
@@ -261,6 +351,8 @@ export default function TaxelingPage() {
   const [tahunPayroll, setTahunPayroll] = useState(new Date().getFullYear());
   const [selectedNik, setSelectedNik] = useState<string | null>(null);
   const [isBpmpModalOpen, setIsBpmpModalOpen] = useState(false);
+  const [isBp21ModalOpen, setIsBp21ModalOpen] = useState(false);
+  const [employeeFilter, setEmployeeFilter] = useState<EmployeeFilter>('ALL');
   const [slipExportNik, setSlipExportNik] = useState<string | null>(null);
   const [isExportingAllSlip, setIsExportingAllSlip] = useState(false);
   const [isSavingHistory, startSaveHistoryTransition] = useTransition();
@@ -289,6 +381,14 @@ export default function TaxelingPage() {
       withholdingDate: formatDateInputValue(today),
     };
   });
+  const [bp21Settings, setBp21Settings] = useState<BpmpModalSettings>(() => {
+    const today = new Date();
+    return {
+      taxPeriodMonth: 10,
+      taxPeriodYear: today.getFullYear(),
+      withholdingDate: formatDateInputValue(today),
+    };
+  });
 
   const employeeList = useMemo(() => Object.values(employees), [employees]);
   const activeEmp = selectedNik ? employees[selectedNik] : null;
@@ -308,6 +408,39 @@ export default function TaxelingPage() {
   type EmployeeListItem = (typeof employeeList)[number];
   const currentPeriodKey = `${companyProfile.npwpPemotong || 'no-npwp'}:${masaPajak}:${tahunPayroll}`;
   const isPeriodLocked = lockedPeriodKey === currentPeriodKey;
+  const hasReviewIssue = useCallback((emp: EmployeeListItem): boolean => {
+    if (emp.karyawan.tipeKaryawan === 'PEGAWAI_TIDAK_TETAP') return true;
+    if (emp.karyawan.tipeKaryawan !== 'NON_PEGAWAI') return false;
+
+    const metadata = emp.karyawan.bp21;
+    return !metadata ||
+      !metadata.taxObjectCode ||
+      !metadata.documentType ||
+      !metadata.documentNumber ||
+      !metadata.documentDate ||
+      !metadata.idTkuPenerima;
+  }, []);
+  const displayedEmployeeList = useMemo(() => {
+    if (employeeFilter === 'TETAP') {
+      return employeeList.filter((emp) => emp.karyawan.tipeKaryawan === 'TETAP');
+    }
+    if (employeeFilter === 'NON_PEGAWAI') {
+      return employeeList.filter((emp) => emp.karyawan.tipeKaryawan === 'NON_PEGAWAI');
+    }
+    if (employeeFilter === 'NEEDS_REVIEW') {
+      return employeeList.filter(hasReviewIssue);
+    }
+    return employeeList;
+  }, [employeeFilter, employeeList, hasReviewIssue]);
+  const filterCounts = useMemo(
+    () => ({
+      ALL: employeeList.length,
+      TETAP: employeeList.filter((emp) => emp.karyawan.tipeKaryawan === 'TETAP').length,
+      NON_PEGAWAI: employeeList.filter((emp) => emp.karyawan.tipeKaryawan === 'NON_PEGAWAI').length,
+      NEEDS_REVIEW: employeeList.filter(hasReviewIssue).length,
+    }),
+    [employeeList, hasReviewIssue]
+  );
 
   const slipEligibleEmployees = useMemo(
     () =>
@@ -326,6 +459,18 @@ export default function TaxelingPage() {
     !!emp.monthlyInputs[masaPajak] &&
     !!emp.monthlyHasils[masaPajak] &&
     emp.monthlyHasils[masaPajak].totalBruto > 0;
+
+  const bp21EligibleEmployees = useMemo(
+    () =>
+      employeeList.filter(
+        (emp) =>
+          emp.karyawan.tipeKaryawan === 'NON_PEGAWAI' &&
+          !!emp.monthlyInputs[masaPajak] &&
+          !!emp.monthlyHasils[masaPajak] &&
+          emp.monthlyHasils[masaPajak].totalBruto > 0
+      ),
+    [employeeList, masaPajak]
+  );
 
   useEffect(() => {
     if (!companyProfile.npwpPemotong) {
@@ -387,7 +532,7 @@ export default function TaxelingPage() {
 
     const employeesSnapshot = Object.fromEntries(
       employeesForPeriod.map((emp) => [
-        emp.karyawan.nik,
+        emp.karyawan.idKaryawan,
         {
           karyawan: emp.karyawan,
           input: emp.monthlyInputs[masaPajak],
@@ -583,15 +728,30 @@ export default function TaxelingPage() {
     const today = new Date();
     setBpmpSettings({
       taxPeriodMonth: masaPajak,
-      taxPeriodYear: today.getFullYear(),
+      taxPeriodYear: tahunPayroll,
       withholdingDate: formatDateInputValue(today),
     });
     setExportError(null);
     setIsBpmpModalOpen(true);
   };
 
+  const openBp21Modal = () => {
+    const today = new Date();
+    setBp21Settings({
+      taxPeriodMonth: masaPajak,
+      taxPeriodYear: tahunPayroll,
+      withholdingDate: formatDateInputValue(today),
+    });
+    setExportError(null);
+    setIsBp21ModalOpen(true);
+  };
+
   const closeBpmpModal = () => {
     setIsBpmpModalOpen(false);
+  };
+
+  const closeBp21Modal = () => {
+    setIsBp21ModalOpen(false);
   };
 
   const downloadXML = (settings: BpmpModalSettings) => {
@@ -599,6 +759,7 @@ export default function TaxelingPage() {
       const data = employeeList
         .filter(
           (emp) =>
+            emp.karyawan.tipeKaryawan === 'TETAP' &&
             emp.monthlyHasils[settings.taxPeriodMonth]?.totalBruto > 0
         )
         .map((emp) => ({
@@ -607,7 +768,7 @@ export default function TaxelingPage() {
         }));
 
       if (data.length === 0) {
-        throw new Error('Tidak ada karyawan aktif untuk export BPMP.');
+        throw new Error('Tidak ada pegawai tetap aktif untuk export BPMP.');
       }
 
       const xml = generateBpmpXml(
@@ -644,13 +805,64 @@ export default function TaxelingPage() {
     }
   };
 
+  const downloadBP21XML = (settings: BpmpModalSettings) => {
+    try {
+      const data = employeeList
+        .filter(
+          (emp) =>
+            emp.karyawan.tipeKaryawan === 'NON_PEGAWAI' &&
+            emp.monthlyHasils[settings.taxPeriodMonth]?.totalBruto > 0
+        )
+        .map((emp) => ({
+          karyawan: emp.karyawan,
+          hasilKalkulasi: emp.monthlyHasils[settings.taxPeriodMonth],
+        }));
+
+      if (data.length === 0) {
+        throw new Error('Tidak ada bukan pegawai aktif untuk export BP21.');
+      }
+
+      const xml = generateBp21Xml(
+        {
+          namaPerusahaan: companyProfile.namaPerusahaan,
+          npwpPemotong: companyProfile.npwpPemotong,
+          idTku: companyProfile.idTku,
+        },
+        data,
+        {
+          taxPeriodMonth: settings.taxPeriodMonth,
+          taxPeriodYear: settings.taxPeriodYear,
+          withholdingDate: settings.withholdingDate,
+          strict: true,
+        }
+      );
+
+      downloadBp21Xml(xml);
+      setExportError(null);
+      void recordPayrollAuditEvent({
+        eventType: 'GENERATE_XML',
+        companyProfile,
+        periodMonth: settings.taxPeriodMonth,
+        periodYear: settings.taxPeriodYear,
+        description: `Generate XML BP21 masa ${settings.taxPeriodMonth}/${settings.taxPeriodYear}`,
+        metadata: {
+          employeeCount: data.length,
+          withholdingDate: settings.withholdingDate,
+        },
+      });
+      closeBp21Modal();
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Gagal export XML BP21.');
+    }
+  };
+
   const handleDownloadSlip = async (emp: EmployeeListItem) => {
     if (!isSlipEligible(emp)) {
       setExportError('Slip gaji hanya tersedia untuk pegawai TETAP yang punya hasil di periode aktif.');
       return;
     }
 
-    setSlipExportNik(emp.karyawan.nik);
+    setSlipExportNik(emp.karyawan.idKaryawan);
     setExportError(null);
 
     try {
@@ -714,7 +926,7 @@ export default function TaxelingPage() {
       return;
     }
 
-    updateVariable(emp.karyawan.nik, masaPajak, updates);
+    updateVariable(emp.karyawan.idKaryawan, masaPajak, updates);
     void recordPayrollAuditEvent({
       eventType: 'UPDATE_VARIABLE',
       companyProfile,
@@ -1199,7 +1411,39 @@ export default function TaxelingPage() {
                 >
                   Generate XML BPMP
                 </Button>
+                <Button
+                  onClick={openBp21Modal}
+                  disabled={bp21EligibleEmployees.length === 0}
+                  className={`h-10 rounded-xl px-6 text-xs font-black focus-visible:ring-[#FFE66D]/30 ${
+                    bp21EligibleEmployees.length === 0
+                      ? 'cursor-not-allowed bg-[#343434]/70 text-[#F7FFF7]/40'
+                      : 'border border-[#FFE66D]/50 bg-[#FFE66D]/10 text-[#FFE66D] hover:bg-[#FFE66D] hover:text-[#343434]'
+                  }`}
+                >
+                  Generate XML BP21
+                </Button>
               </div>
+            </div>
+            <div className="flex flex-wrap gap-2 border-b border-[#6CA6C1]/20 bg-[#343434]/35 px-6 py-4">
+              {[
+                ['ALL', 'Semua'],
+                ['TETAP', 'Pegawai Tetap'],
+                ['NON_PEGAWAI', 'Bukan Pegawai'],
+                ['NEEDS_REVIEW', 'Perlu Dicek'],
+              ].map(([value, label]) => (
+                <Button
+                  key={value}
+                  type="button"
+                  onClick={() => setEmployeeFilter(value as EmployeeFilter)}
+                  className={`h-9 rounded-lg px-3 text-[11px] font-black focus-visible:ring-[#6CA6C1]/30 ${
+                    employeeFilter === value
+                      ? 'bg-[#FFE66D] text-[#343434]'
+                      : 'border border-[#6CA6C1]/30 bg-[#2F3061]/70 text-[#F7FFF7]/70 hover:border-[#6CA6C1] hover:text-[#FFE66D]'
+                  }`}
+                >
+                  {label} ({filterCounts[value as EmployeeFilter]})
+                </Button>
+              ))}
             </div>
             <div className="overflow-x-auto">
               <Table>
@@ -1216,15 +1460,15 @@ export default function TaxelingPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody className="divide-y divide-[#6CA6C1]/20">
-                  {employeeList.map((emp) => {
+                  {displayedEmployeeList.map((emp) => {
                     const input = emp.monthlyInputs[masaPajak];
                     const result = emp.monthlyHasils[masaPajak];
                     const slipEligible = isSlipEligible(emp);
                     const isGeneratingSlip =
-                      slipExportNik === emp.karyawan.nik;
+                      slipExportNik === emp.karyawan.idKaryawan;
                     return (
                       <TableRow
-                        key={emp.karyawan.nik}
+                        key={emp.karyawan.idKaryawan}
                         className="border-[#6CA6C1]/20 hover:bg-[#343434]/45"
                       >
                         <TableCell className="p-4">
@@ -1285,7 +1529,7 @@ export default function TaxelingPage() {
                         <TableCell className="p-4 text-center">
                           <div className="flex flex-wrap items-center justify-center gap-2">
                             <Button
-                              onClick={() => setSelectedNik(emp.karyawan.nik)}
+                              onClick={() => setSelectedNik(emp.karyawan.idKaryawan)}
                               className="h-9 rounded-lg border border-[#6CA6C1]/40 bg-[#343434]/80 px-3 text-xs font-bold text-[#6CA6C1] transition-colors hover:bg-[#6CA6C1] hover:text-[#343434] focus-visible:ring-[#6CA6C1]/30"
                             >
                               Detail
@@ -1433,6 +1677,127 @@ export default function TaxelingPage() {
           </div>
         )}
 
+        {isBp21ModalOpen && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+            <button
+              aria-label="Tutup modal Generate XML BP21"
+              className="absolute inset-0"
+              onClick={closeBp21Modal}
+            />
+            <div className="relative z-10 w-full max-w-xl rounded-3xl border border-[#FFE66D]/30 bg-[#2F3061] p-6 text-[#F7FFF7] shadow-2xl">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-[#FFE66D]">Generate XML BP21</h3>
+                  <p className="mt-2 text-xs text-[#F7FFF7]/65">
+                    Export khusus bukan pegawai dengan format Bp21Bulk.
+                  </p>
+                </div>
+                <Button
+                  onClick={closeBp21Modal}
+                  className="h-9 rounded-lg border border-[#6CA6C1]/40 bg-[#343434]/80 px-3 text-xs font-bold text-[#F7FFF7] transition-colors hover:bg-[#6CA6C1] hover:text-[#343434] focus-visible:ring-[#6CA6C1]/30"
+                >
+                  Tutup
+                </Button>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Masa Pajak
+                  </label>
+                  <Select
+                    value={String(bp21Settings.taxPeriodMonth)}
+                    onValueChange={(value) =>
+                      setBp21Settings((prev) => ({
+                        ...prev,
+                        taxPeriodMonth: Number(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Pilih masa pajak" />
+                    </SelectTrigger>
+                    <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                      <SelectGroup>
+                        {[...Array(12)].map((_, i) => (
+                          <SelectItem
+                            key={i + 1}
+                            value={String(i + 1)}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            Bulan {i + 1}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Tahun Pajak
+                  </label>
+                  <Select
+                    value={String(bp21Settings.taxPeriodYear)}
+                    onValueChange={(value) =>
+                      setBp21Settings((prev) => ({
+                        ...prev,
+                        taxPeriodYear: Number(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Pilih tahun pajak" />
+                    </SelectTrigger>
+                    <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                      <SelectGroup>
+                        {availableTaxYears.map((year) => (
+                          <SelectItem
+                            key={year}
+                            value={String(year)}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            {year}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Tanggal Pemotongan
+                  </label>
+                  <Input
+                    type="date"
+                    value={bp21Settings.withholdingDate}
+                    onChange={(e) =>
+                      setBp21Settings((prev) => ({
+                        ...prev,
+                        withholdingDate: e.target.value,
+                      }))
+                    }
+                    className={TABLE_INPUT_CLASS}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] text-[#F7FFF7]/55">
+                  Ditemukan {bp21EligibleEmployees.length} transaksi bukan pegawai pada masa aktif.
+                </p>
+                <Button
+                  onClick={() => downloadBP21XML(bp21Settings)}
+                  className="h-11 rounded-xl bg-[#FFE66D] px-5 text-xs font-black text-[#343434] transition-colors hover:bg-[#F7FFF7] focus-visible:ring-[#FFE66D]/30"
+                >
+                  Download XML BP21
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeEmp && activeInput && activeResult && (
           <div className="fixed inset-0 z-50 flex">
             <button className="flex-1 bg-black/70" onClick={() => setSelectedNik(null)} />
@@ -1478,7 +1843,7 @@ export default function TaxelingPage() {
                           }
 
                           setSubjekPajakSejakAwalTahun(
-                            activeEmp.karyawan.nik,
+                            activeEmp.karyawan.idKaryawan,
                             value === 'YA'
                           );
                           void recordPayrollAuditEvent({
@@ -1581,7 +1946,7 @@ export default function TaxelingPage() {
                                         }
 
                                         setNominalOverride(
-                                          activeEmp.karyawan.nik,
+                                          activeEmp.karyawan.idKaryawan,
                                           masaPajak,
                                           row.key,
                                           parseNullableCurrencyInput(e.target.value)
@@ -1617,7 +1982,7 @@ export default function TaxelingPage() {
                                       }
 
                                       setNominalOverride(
-                                        activeEmp.karyawan.nik,
+                                        activeEmp.karyawan.idKaryawan,
                                         masaPajak,
                                         row.key,
                                         null
