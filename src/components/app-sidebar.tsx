@@ -26,34 +26,34 @@ const baseData = {
     {
       name: "Taxeling",
       logo: (
-        <WalletCardsIcon
+        <CalculatorIcon
         />
       ),
       plan: "Internal Payroll",
     },
-    {
-      name: "PPh 21 / 26",
-      logo: (
-        <CalculatorIcon
-        />
-      ),
-      plan: "Tax Engine",
-    },
-    {
-      name: "BPMP Coretax",
-      logo: (
-        <FileCode2Icon
-        />
-      ),
-      plan: "XML Export",
-    },
+    // {
+    //   name: "PPh 21 / 26",
+    //   logo: (
+    //     <CalculatorIcon
+    //     />
+    //   ),
+    //   plan: "Tax Engine",
+    // },
+    // {
+    //   name: "BPMP Coretax",
+    //   logo: (
+    //     <FileCode2Icon
+    //     />
+    //   ),
+    //   plan: "XML Export",
+    // },
   ],
   navMain: [
     {
       title: "Payroll",
       url: "/bulk",
       icon: (
-        <LayoutDashboardIcon
+        <CalculatorIcon
         />
       ),
       isActive: true,
