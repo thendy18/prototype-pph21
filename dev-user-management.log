@@ -21,3 +21,93 @@
  POST /login?reason=signin 303 in 1028ms (next.js: 3ms, proxy.ts: 5ms, application-code: 1020ms)
   └─ ƒ login({}, {}) in 573ms src/actions/authActions.ts
  GET /users 200 in 787ms (next.js: 27ms, proxy.ts: 285ms, application-code: 475ms)
+ GET /users?success=User+baru+berhasil+dibuat. 200 in 508ms (next.js: 2ms, proxy.ts: 184ms, application-code: 321ms)
+ POST /users 303 in 1327ms (next.js: 2ms, proxy.ts: 267ms, application-code: 1057ms)
+  └─ ƒ createUserWithFeedback({"message":"","status":"idle"}, {}) in 541ms src/actions/userActions.ts
+ GET / 307 in 2.9s (next.js: 19ms, proxy.ts: 1942ms, application-code: 989ms)
+ GET /bulk 200 in 1830ms (next.js: 3ms, proxy.ts: 954ms, application-code: 872ms)
+ GET /users 200 in 712ms (next.js: 3ms, proxy.ts: 258ms, application-code: 452ms)
+ GET /users?success=User+baru+berhasil+dibuat. 200 in 597ms (next.js: 2ms, proxy.ts: 209ms, application-code: 385ms)
+ POST /users 303 in 1536ms (next.js: 2ms, proxy.ts: 386ms, application-code: 1148ms)
+  └─ ƒ createUserWithFeedback({"message":"","status":"idle"}, {}) in 543ms src/actions/userActions.ts
+ GET /users?success=User+baru+berhasil+dibuat. 200 in 571ms (next.js: 3ms, proxy.ts: 206ms, application-code: 362ms)
+ POST /users?success=User+baru+berhasil+dibuat. 303 in 1325ms (next.js: 3ms, proxy.ts: 258ms, application-code: 1065ms)
+  └─ ƒ createUserWithFeedback({"message":"","status":"idle"}, {}) in 486ms src/actions/userActions.ts
+ GET /login?reason=signin 200 in 33ms (next.js: 2ms, proxy.ts: 3ms, application-code: 27ms)
+ GET /bulk 200 in 492ms (next.js: 2ms, proxy.ts: 229ms, application-code: 260ms)
+ POST /login?reason=signin 303 in 891ms (next.js: 3ms, proxy.ts: 3ms, application-code: 885ms)
+  └─ ƒ login({}, {}) in 386ms src/actions/authActions.ts
+ GET / 307 in 1291ms (next.js: 4ms, proxy.ts: 1046ms, application-code: 241ms)
+ GET /bulk 200 in 459ms (next.js: 3ms, proxy.ts: 196ms, application-code: 260ms)
+ GET /history 200 in 2.2s (next.js: 22ms, proxy.ts: 1491ms, application-code: 714ms)
+ GET /template-excel 200 in 876ms (next.js: 19ms, proxy.ts: 529ms, application-code: 328ms)
+ GET /users 200 in 1492ms (next.js: 2ms, proxy.ts: 966ms, application-code: 525ms)
+ GET /bulk 200 in 4.0s (next.js: 3ms, proxy.ts: 2.2s, application-code: 1722ms)
+ GET /bulk 200 in 1542ms (next.js: 3ms, proxy.ts: 525ms, application-code: 1014ms)
+✓ Compiled in 225ms
+✓ Compiled in 130ms
+ GET / 307 in 1238ms (next.js: 60ms, proxy.ts: 834ms, application-code: 343ms)
+ GET /bulk 200 in 539ms (next.js: 8ms, proxy.ts: 201ms, application-code: 330ms)
+ GET /users 200 in 763ms (next.js: 80ms, proxy.ts: 228ms, application-code: 455ms)
+ GET /users?success=Role+user+berhasil+diperbarui. 200 in 730ms (next.js: 2ms, proxy.ts: 389ms, application-code: 339ms)
+ POST /users 303 in 1561ms (next.js: 2ms, proxy.ts: 194ms, application-code: 1366ms)
+  └─ ƒ updateUserRole({}) in 624ms src/actions/userActions.ts
+ GET /users?success=User+baru+berhasil+dibuat. 200 in 603ms (next.js: 3ms, proxy.ts: 216ms, application-code: 384ms)
+ POST /users?success=Role+user+berhasil+diperbarui. 303 in 1489ms (next.js: 3ms, proxy.ts: 332ms, application-code: 1153ms)
+  └─ ƒ createUserWithFeedback({"message":"","status":"idle"}, {}) in 542ms src/actions/userActions.ts
+ GET /users?success=Status+user+berhasil+diperbarui. 200 in 656ms (next.js: 3ms, proxy.ts: 244ms, application-code: 409ms)
+ POST /users?success=User+baru+berhasil+dibuat. 303 in 1709ms (next.js: 2ms, proxy.ts: 494ms, application-code: 1214ms)
+  └─ ƒ updateUserActiveStatus({}) in 551ms src/actions/userActions.ts
+ GET /users?success=Status+user+berhasil+diperbarui. 200 in 670ms (next.js: 2ms, proxy.ts: 243ms, application-code: 425ms)
+ POST /users?success=Status+user+berhasil+diperbarui. 303 in 1407ms (next.js: 3ms, proxy.ts: 242ms, application-code: 1162ms)
+  └─ ƒ updateUserActiveStatus({}) in 487ms src/actions/userActions.ts
+ POST /login?reason=signin 200 in 19ms (next.js: 8ms, proxy.ts: 2ms, application-code: 9ms)
+[browser] Uncaught Error: An unexpected response was received from the server.
+    at form (<anonymous>)
+    at ResetPasswordForm (src/app/users/user-action-forms.tsx:127:5)
+    at <anonymous> (src\app\users\page.tsx:132:19)
+    at Array.map (<anonymous>:1:18)
+    at UsersPage (src\app\users\page.tsx:94:20)
+  125 | export function ResetPasswordForm({ userId }: { userId: string }) {
+  126 |   return (
+> 127 |     <form
+      |     ^
+  128 |       action={resetUserPassword}
+  129 |       className="rounded-2xl border border-[#6CA6C1]/25 bg-[#2F3061]/80 p-4"
+  130 |     >
+ GET /login?reason=signin 200 in 35ms (next.js: 1565µs, proxy.ts: 1985µs, application-code: 31ms)
+✓ Compiled in 51ms
+⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /login?reason=signin 200 in 190ms (next.js: 71ms, proxy.ts: 3ms, application-code: 116ms)
+ GET /login?reason=signin 200 in 28ms (next.js: 3ms, proxy.ts: 4ms, application-code: 22ms)
+ GET /login?reason=signin 200 in 179ms (next.js: 59ms, proxy.ts: 57ms, application-code: 64ms)
+ GET /login?reason=signin 200 in 23ms (next.js: 2ms, proxy.ts: 4ms, application-code: 17ms)
+✓ Compiled in 57ms
+ GET /login?reason=signin 200 in 174ms (next.js: 61ms, proxy.ts: 53ms, application-code: 60ms)
+ GET /login?reason=signin 200 in 38ms (next.js: 1782µs, proxy.ts: 3ms, application-code: 33ms)
+ GET /login?reason=signin 200 in 21ms (next.js: 1859µs, proxy.ts: 3ms, application-code: 16ms)
+✓ Compiled in 61ms
+ GET /login?reason=signin 200 in 181ms (next.js: 58ms, proxy.ts: 54ms, application-code: 69ms)
+ GET /login?reason=signin 200 in 77ms (next.js: 2ms, proxy.ts: 4ms, application-code: 71ms)
+ GET /login?reason=signin 200 in 52ms (next.js: 6ms, proxy.ts: 16ms, application-code: 30ms)
+ GET /login?reason=signin 200 in 52ms (next.js: 14ms, proxy.ts: 18ms, application-code: 20ms)
+Error [AuthApiError]: Invalid Refresh Token: Refresh Token Not Found
+    at ignore-listed frames {
+  __isAuthError: true,
+  status: 400,
+  code: 'refresh_token_not_found'
+}
+Error [AuthApiError]: Invalid Refresh Token: Refresh Token Not Found
+    at ignore-listed frames {
+  __isAuthError: true,
+  status: 400,
+  code: 'refresh_token_not_found'
+}
+ GET /login?reason=signin 200 in 86ms (next.js: 1987µs, proxy.ts: 2ms, application-code: 82ms)
+ GET /bulk 200 in 552ms (next.js: 9ms, proxy.ts: 292ms, application-code: 252ms)
+ POST /login?reason=signin 303 in 1146ms (next.js: 2ms, proxy.ts: 4ms, application-code: 1140ms)
+  └─ ƒ login({}, {}) in 580ms src/actions/authActions.ts
+ GET /users 200 in 784ms (next.js: 80ms, proxy.ts: 226ms, application-code: 478ms)
+ POST /users 200 in 1230ms (next.js: 3ms, proxy.ts: 303ms, application-code: 924ms)
+  └─ ƒ updateUserRoleWithFeedback({"message":"","nonce":0,"status":"idle"}, {}) in 523ms src/actions/userActions.ts
+ GET /users 200 in 658ms (next.js: 2ms, proxy.ts: 245ms, application-code: 411ms)

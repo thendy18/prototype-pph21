@@ -1,21 +1,12 @@
-import {
-  resetUserPassword,
-  updateUserActiveStatus,
-  updateUserRole,
-} from '../../actions/userActions';
 import { listAppUsers } from '../../lib/appUsers';
 import { requireMasterProfile } from '../../lib/auth';
 import { CreateUserForm } from './create-user-form';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  ResetPasswordForm,
+  RoleUpdateForm,
+  UserStatusForm,
+} from './user-action-forms';
+import { UserToast } from './user-toast';
 
 type UsersPageProps = {
   searchParams: Promise<{
@@ -31,18 +22,6 @@ function firstValue(value: string | string[] | undefined): string | null {
 
 const PANEL_CLASS =
   'rounded-3xl border border-[#6CA6C1]/25 bg-[#2F3061] p-6 shadow-xl shadow-black/20';
-
-const LABEL_CLASS =
-  'text-[10px] font-black uppercase tracking-[0.2em] text-[#F7FFF7]/55';
-
-const SELECT_TRIGGER_CLASS =
-  'h-10 w-full rounded-xl border-[#6CA6C1]/35 bg-[#343434]/80 font-mono text-sm font-semibold text-[#F7FFF7] transition-all hover:border-[#6CA6C1] hover:bg-[#343434] focus:ring-2 focus:ring-[#6CA6C1]/25 data-[state=open]:border-[#6CA6C1] [&_svg]:text-[#6CA6C1]';
-
-const SELECT_CONTENT_CLASS =
-  'rounded-xl border border-[#6CA6C1]/30 bg-[#343434] font-mono text-[#F7FFF7] shadow-2xl shadow-black/40 [&_[data-slot=select-scroll-down-button]]:bg-[#343434] [&_[data-slot=select-scroll-down-button]]:text-[#6CA6C1] [&_[data-slot=select-scroll-up-button]]:bg-[#343434] [&_[data-slot=select-scroll-up-button]]:text-[#6CA6C1] [&_[data-slot=select-viewport]]:bg-[#343434]';
-
-const SELECT_ITEM_CLASS =
-  'cursor-pointer rounded-lg font-mono text-sm !text-[#F7FFF7] hover:bg-[#2F3061] hover:!text-[#FFE66D] focus:bg-[#2F3061] focus:!text-[#FFE66D] data-[highlighted]:bg-[#2F3061] data-[highlighted]:!text-[#FFE66D] data-[state=checked]:bg-[#6CA6C1]/20 data-[state=checked]:!text-[#FFE66D] [&_svg]:!text-[#FFE66D]';
 
 export default async function UsersPage({ searchParams }: UsersPageProps) {
   const currentUser = await requireMasterProfile();
@@ -71,17 +50,10 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
           </div>
         </section>
 
-        {successMessage && (
-          <div className="rounded-2xl border border-[#6CA6C1]/40 bg-[#6CA6C1]/10 px-4 py-3 text-sm font-semibold text-[#F7FFF7]">
-            {successMessage}
-          </div>
-        )}
-
-        {errorMessage && (
-          <div className="rounded-2xl border border-[#FFE66D]/40 bg-[#FFE66D]/10 px-4 py-3 text-sm font-semibold text-[#FFE66D]">
-            {errorMessage}
-          </div>
-        )}
+        <UserToast
+          status={successMessage ? 'success' : errorMessage ? 'error' : null}
+          message={successMessage ?? errorMessage}
+        />
 
         <section className={PANEL_CLASS}>
           <div className="mb-4">
@@ -143,88 +115,9 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
                 </div>
 
                 <div className="mt-4 grid gap-4 xl:grid-cols-3">
-                  <form action={updateUserRole} className="rounded-2xl border border-[#6CA6C1]/25 bg-[#2F3061]/80 p-4">
-                    <input type="hidden" name="user_id" value={user.id} />
-                    <label className={`mb-2 block ${LABEL_CLASS}`}>
-                      Ubah Role
-                    </label>
-                    <div className="flex gap-3">
-                      <Select
-                        name="role"
-                        defaultValue={user.role}
-                      >
-                        <SelectTrigger className={`flex-1 ${SELECT_TRIGGER_CLASS}`}>
-                          <SelectValue placeholder="Pilih role" />
-                        </SelectTrigger>
-                        <SelectContent className={SELECT_CONTENT_CLASS}>
-                          <SelectGroup>
-                            <SelectItem value="staff" className={SELECT_ITEM_CLASS}>staff</SelectItem>
-                            <SelectItem value="master" className={SELECT_ITEM_CLASS}>master</SelectItem>
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="submit"
-                        className="h-10 rounded-xl bg-[#6CA6C1] px-4 text-xs font-black uppercase tracking-[0.2em] text-[#343434] hover:bg-[#F7FFF7] focus-visible:ring-[#6CA6C1]/30"
-                      >
-                        Save
-                      </Button>
-                    </div>
-                  </form>
-
-                  <form
-                    action={updateUserActiveStatus}
-                    className="rounded-2xl border border-[#6CA6C1]/25 bg-[#2F3061]/80 p-4"
-                  >
-                    <input type="hidden" name="user_id" value={user.id} />
-                    <input
-                      type="hidden"
-                      name="is_active"
-                      value={user.isActive ? 'false' : 'true'}
-                    />
-                    <label className={`mb-2 block ${LABEL_CLASS}`}>
-                      Status Akun
-                    </label>
-                    <p className="mb-3 text-sm text-[#F7FFF7]/65">
-                      {user.isActive
-                        ? 'Nonaktifkan user agar tidak bisa login.'
-                        : 'Aktifkan kembali user agar bisa login.'}
-                    </p>
-                    <Button
-                      type="submit"
-                      className={`h-10 rounded-xl px-4 text-xs font-black uppercase tracking-[0.2em] focus-visible:ring-[#FFE66D]/30 ${
-                        user.isActive
-                          ? 'border border-[#FFE66D]/40 bg-[#FFE66D]/10 text-[#FFE66D] hover:bg-[#FFE66D] hover:text-[#343434]'
-                          : 'bg-[#6CA6C1] text-[#343434] hover:bg-[#F7FFF7]'
-                      }`}
-                    >
-                      {user.isActive ? 'Disable' : 'Enable'}
-                    </Button>
-                  </form>
-
-                  <form
-                    action={resetUserPassword}
-                    className="rounded-2xl border border-[#6CA6C1]/25 bg-[#2F3061]/80 p-4"
-                  >
-                    <input type="hidden" name="user_id" value={user.id} />
-                    <label className={`mb-2 block ${LABEL_CLASS}`}>
-                      Reset Password
-                    </label>
-                    <div className="flex gap-3">
-                      <Input
-                        name="password"
-                        type="password"
-                        className="h-10 flex-1 rounded-xl border-[#6CA6C1]/35 bg-[#343434]/80 px-3 text-sm font-semibold text-[#F7FFF7] placeholder:text-[#6CA6C1]/55 hover:border-[#6CA6C1] focus-visible:ring-2 focus-visible:ring-[#6CA6C1]/25"
-                        placeholder="Password baru"
-                      />
-                      <Button
-                        type="submit"
-                        className="h-10 rounded-xl border border-[#6CA6C1]/40 bg-[#343434]/80 px-4 text-xs font-black uppercase tracking-[0.2em] text-[#6CA6C1] hover:bg-[#6CA6C1] hover:text-[#343434] focus-visible:ring-[#6CA6C1]/30"
-                      >
-                        Reset
-                      </Button>
-                    </div>
-                  </form>
+                  <RoleUpdateForm userId={user.id} role={user.role} />
+                  <UserStatusForm userId={user.id} isActive={user.isActive} />
+                  <ResetPasswordForm userId={user.id} />
                 </div>
               </article>
             ))}
