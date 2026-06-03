@@ -36,9 +36,15 @@ export type PasalPemotongan = 'PPh21' | 'PPh26';
 
 export type FasilitasPajak = 'N/A' | 'SKB' | 'DTP' | 'SKD' | 'ETC' | 'TaxExAr21';
 
+export type Bp26TaxCertificate = 'N/A' | 'DTP' | 'COD' | 'ETC';
+
 export type BasisUpahBpjs =
   | 'GAJI_POKOK'
   | 'GAJI_POKOK_PLUS_TUNJANGAN_TETAP';
+
+export type Bpa1StatusOfWithholding = 'FullYear' | 'PartialYear' | 'Annualized';
+
+export type CoretaxYesNo = 'Yes' | 'No';
 
 // ============================================================================
 // 2. KONFIGURASI TARIF & PLAFON
@@ -89,6 +95,46 @@ export interface Bp21Metadata {
   taxCertificate?: FasilitasPajak;
 }
 
+export interface Bpa1Metadata {
+  workForSecondEmployer?: CoretaxYesNo;
+  taxObjectCode?: string;
+  statusOfWithholding?: Bpa1StatusOfWithholding;
+  numberOfMonths?: number;
+  incomeTaxBenefit?: number;
+  otherBenefit?: number;
+  honorarium?: number;
+  insurancePaidByEmployer?: number;
+  natura?: number;
+  tantiemBonusThr?: number;
+  pensionContributionJhtThtFee?: number;
+  zakat?: number;
+  prevWhTaxSlip?: string;
+  taxCertificate?: FasilitasPajak;
+  article21IncomeTax?: number;
+  withholdingDate?: string;
+}
+
+export interface Bp26Metadata {
+  counterpartTin: string;
+  counterpartReceiptNumber?: string;
+  country: string;
+  address: string;
+  dateOfBirth: string;
+  birthCity: string;
+  kitas?: string;
+  taxCertificate?: Bp26TaxCertificate;
+  taxObjectCode?: string;
+  deemed?: number;
+  rate?: number;
+  documentType: string;
+  documentNumber: string;
+  documentDate: string;
+  withholdingDate?: string;
+  hasExplicitDeemed?: boolean;
+  hasExplicitRate?: boolean;
+  hasExplicitReceiptNumber?: boolean;
+}
+
 export interface DataKaryawan {
   idKaryawan: string;
   nik: string; // 16 digit NIK / counterpart default
@@ -102,13 +148,15 @@ export interface DataKaryawan {
   bulanSelesai: number;
   subjekPajakSejakAwalTahun: boolean;
 
-  // Metadata tambahan yang akan berguna untuk XML / slip / BPA1
+  // Metadata tambahan yang akan berguna untuk XML / slip / BPA1 / BP26
   jabatan?: string;
   counterpartTin?: string;
   temporaryTin?: string;
   noPaspor: string | null;
   fasilitasPajak: FasilitasPajak;
   bp21?: Bp21Metadata;
+  bpa1?: Bpa1Metadata;
+  bp26?: Bp26Metadata;
 
   // Legacy bridge agar migrasi file lain bisa bertahap
   adaNPWP?: boolean;

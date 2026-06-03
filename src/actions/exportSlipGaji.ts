@@ -1,9 +1,15 @@
 import { pdf, type DocumentProps } from '@react-pdf/renderer';
 import JSZip from 'jszip';
 import { createElement, type ReactElement } from 'react';
+import ReceiptPembayaranDocument from '../components/slip/ReceiptPembayaranDocument';
 import SlipGajiDocument from '../components/slip/SlipGajiDocument';
 import { applyNominalOverrides } from '../lib/payrollOverrides';
-import { SlipGajiLineItem, SlipGajiPayload, SlipGajiSource } from '../types/slipGaji';
+import {
+  ReceiptPembayaranPayload,
+  SlipGajiLineItem,
+  SlipGajiPayload,
+  SlipGajiSource,
+} from '../types/slipGaji';
 
 function formatPeriodLabel(month: number, year: number): string {
   const date = new Date(year, month - 1, 1);
@@ -225,10 +231,107 @@ export function buildSlipGajiPayload(source: SlipGajiSource): SlipGajiPayload {
   };
 }
 
+function resolveReceiptWithholdingDate(source: SlipGajiSource): string {
+  const lastDay = new Date(source.tahun, source.bulan, 0).getDate();
+  return (
+    source.karyawan.bp21?.withholdingDate ||
+    source.karyawan.bp26?.withholdingDate ||
+    `${source.tahun}-${String(source.bulan).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  );
+}
+
+function resolveReceiptDocument(source: SlipGajiSource): ReceiptPembayaranPayload['document'] {
+  const bp21 = source.karyawan.bp21;
+  const bp26 = source.karyawan.bp26;
+
+  return {
+    type: bp21?.documentType || bp26?.documentType || '-',
+    number: bp21?.documentNumber || bp26?.documentNumber || '-',
+    date: bp21?.documentDate || bp26?.documentDate || '-',
+    withholdingDate: resolveReceiptWithholdingDate(source),
+    idTkuPenerima: bp21?.idTkuPenerima || '-',
+  };
+}
+
+function resolveReceiptTax(source: SlipGajiSource): ReceiptPembayaranPayload['tax'] {
+  const { karyawan, hasil } = source;
+  const gross = Math.max(0, Math.floor(hasil.totalBruto));
+  const isNonResident = karyawan.residentStatus === 'NON_RESIDENT';
+  const deemedPercent = isNonResident
+    ? karyawan.bp26?.deemed ?? 100
+    : karyawan.bp21?.deemedPersentase ?? 50;
+  const taxBase = Math.max(0, Math.floor((gross * deemedPercent) / 100));
+  const taxWithheld = Math.max(0, Math.floor(hasil.pajakTerutang));
+  const ratePercent =
+    typeof karyawan.bp26?.rate === 'number'
+      ? karyawan.bp26.rate
+      : gross > 0
+        ? (taxWithheld / gross) * 100
+        : 0;
+
+  return {
+    taxObjectCode:
+      karyawan.bp21?.taxObjectCode ||
+      karyawan.bp26?.taxObjectCode ||
+      (isNonResident ? '27-100-99' : '-'),
+    taxCertificate:
+      karyawan.bp21?.taxCertificate ||
+      karyawan.bp26?.taxCertificate ||
+      karyawan.fasilitasPajak ||
+      'N/A',
+    deemedPercent,
+    ratePercent,
+    gross,
+    taxBase,
+    taxWithheld,
+    netPaid: Math.max(0, Math.floor(hasil.thpBersih)),
+  };
+}
+
+export function buildReceiptPembayaranPayload(
+  source: SlipGajiSource
+): ReceiptPembayaranPayload {
+  const { namaPerusahaan, bulan, tahun, karyawan } = source;
+
+  if (karyawan.tipeKaryawan === 'TETAP') {
+    throw new Error(`Receipt PDF hanya tersedia untuk bukan pegawai: ${karyawan.namaLengkap}`);
+  }
+
+  return {
+    companyName: namaPerusahaan.trim() || 'Perusahaan',
+    period: {
+      month: bulan,
+      year: tahun,
+      label: formatPeriodLabel(bulan, tahun),
+    },
+    recipient: {
+      id: karyawan.idKaryawan?.trim() || karyawan.nik,
+      nik: karyawan.counterpartTin?.trim() || karyawan.nik,
+      nama: karyawan.namaLengkap,
+      residentStatus: karyawan.residentStatus,
+      statusIdentitas: karyawan.statusIdentitas,
+      metodePajak: karyawan.metodePajak,
+      jenisPenerima: karyawan.tipeKaryawan,
+    },
+    tax: resolveReceiptTax(source),
+    document: resolveReceiptDocument(source),
+  };
+}
+
 export async function generateSlipGajiPdfBlob(
   payload: SlipGajiPayload
 ): Promise<Blob> {
   const documentElement = createElement(SlipGajiDocument, {
+    payload,
+  }) as unknown as ReactElement<DocumentProps>;
+  const instance = pdf(documentElement);
+  return instance.toBlob();
+}
+
+export async function generateReceiptPembayaranPdfBlob(
+  payload: ReceiptPembayaranPayload
+): Promise<Blob> {
+  const documentElement = createElement(ReceiptPembayaranDocument, {
     payload,
   }) as unknown as ReactElement<DocumentProps>;
   const instance = pdf(documentElement);
@@ -242,6 +345,15 @@ export function buildSlipGajiFilename(source: SlipGajiSource): string {
   );
   const employeeName = sanitizeFilenamePart(source.karyawan.namaLengkap);
   return `SlipGaji_${period}_${employeeId}_${employeeName}.pdf`;
+}
+
+export function buildReceiptPembayaranFilename(source: SlipGajiSource): string {
+  const period = formatPeriodStamp(source.bulan, source.tahun);
+  const recipientId = sanitizeFilenamePart(
+    source.karyawan.idKaryawan?.trim() || source.karyawan.nik
+  );
+  const recipientName = sanitizeFilenamePart(source.karyawan.namaLengkap);
+  return `ReceiptPembayaran_${period}_${recipientId}_${recipientName}.pdf`;
 }
 
 function downloadBlob(blob: Blob, filename: string): void {
@@ -259,6 +371,14 @@ export async function downloadSlipGajiPdf(
   const payload = buildSlipGajiPayload(source);
   const blob = await generateSlipGajiPdfBlob(payload);
   downloadBlob(blob, buildSlipGajiFilename(source));
+}
+
+export async function downloadReceiptPembayaranPdf(
+  source: SlipGajiSource
+): Promise<void> {
+  const payload = buildReceiptPembayaranPayload(source);
+  const blob = await generateReceiptPembayaranPdfBlob(payload);
+  downloadBlob(blob, buildReceiptPembayaranFilename(source));
 }
 
 export async function downloadAllSlipGajiZip(

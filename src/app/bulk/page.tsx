@@ -9,14 +9,19 @@ import {
   savePayrollPeriodHistory,
 } from '../../actions/payrollHistoryActions';
 import {
+  downloadBpa1Xml,
   downloadBp21Xml,
+  downloadBp26Xml,
   downloadBpmpXml,
+  generateBpa1Xml,
   generateBp21Xml,
+  generateBp26Xml,
   generateBpmpXml,
   type BpmpGlobalSettings,
 } from '../../actions/exportXML';
 import {
   downloadAllSlipGajiZip,
+  downloadReceiptPembayaranPdf,
   downloadSlipGajiPdf,
 } from '../../actions/exportSlipGaji';
 import { buildNominalOverridePreviewRows } from '../../lib/payrollOverrides';
@@ -319,6 +324,51 @@ function buildImportValidationReport(
           addError('WithholdingDate', 'WithholdingDate harus berformat YYYY-MM-DD.');
         }
       }
+
+      const isBp26Row =
+        jenisPenerima.includes('TETAP') &&
+        !jenisPenerima.includes('TIDAK') &&
+        (residentStatus === 'NON_RESIDENT' || residentStatus === 'NON RESIDENT');
+
+      if (isBp26Row) {
+        const counterpartTin = readCell(row, 'BP26 CounterpartTin', 'BP26_CounterpartTin');
+        const country = readCell(row, 'BP26 Country', 'BP26_Country');
+        const address = readCell(row, 'BP26 Address', 'BP26_Address');
+        const dateOfBirth = normalizeExcelDate(row['BP26 Date Of Birth'] ?? row['BP26_Date_Of_Birth']);
+        const birthCity = readCell(row, 'BP26 Birth City', 'BP26_Birth_City');
+        const taxCertificate = readCell(row, 'BP26 TaxCertificate', 'BP26_TaxCertificate').toUpperCase() || 'N/A';
+        const receipt = readCell(row, 'BP26 CounterpartReceiptNumber', 'BP26_CounterpartReceiptNumber');
+        const deemed = readCell(row, 'BP26 Deemed', 'BP26_Deemed');
+        const rate = readCell(row, 'BP26 Rate', 'BP26_Rate');
+        const document = readCell(row, 'Document', 'Jenis Dokumen', 'BP26 Document');
+        const documentNumber = readCell(row, 'DocumentNumber', 'Document Number', 'Nomor Dokumen', 'BP26 DocumentNumber');
+        const documentDate = normalizeExcelDate(row['DocumentDate'] ?? row['Document Date'] ?? row['Tanggal Dokumen'] ?? row['BP26 DocumentDate']);
+        const withholdingDate = normalizeExcelDate(row['WithholdingDate'] ?? row['Withholding Date'] ?? row['Tanggal Pemotongan'] ?? row['BP26 WithholdingDate']);
+
+        if (!counterpartTin) addError('BP26 CounterpartTin', 'BP26 CounterpartTin wajib diisi.');
+        if (!country) addError('BP26 Country', 'BP26 Country wajib diisi.');
+        if (!address) addError('BP26 Address', 'BP26 Address wajib diisi.');
+        if (!dateOfBirth || !isValidIsoDateText(dateOfBirth)) {
+          addError('BP26 Date Of Birth', 'BP26 Date Of Birth wajib berformat YYYY-MM-DD.');
+        }
+        if (!birthCity) addError('BP26 Birth City', 'BP26 Birth City wajib diisi.');
+        if (!['N/A', 'DTP', 'COD', 'ETC'].includes(taxCertificate)) {
+          addError('BP26 TaxCertificate', 'BP26 TaxCertificate harus N/A, DTP, COD, atau ETC.');
+        }
+        if (!document) addError('Document', 'Document wajib diisi untuk BP26.');
+        if (!documentNumber) addError('DocumentNumber', 'DocumentNumber wajib diisi untuk BP26.');
+        if (!documentDate || !isValidIsoDateText(documentDate)) {
+          addError('DocumentDate', 'DocumentDate wajib berformat YYYY-MM-DD untuk BP26.');
+        }
+        if (withholdingDate && !isValidIsoDateText(withholdingDate)) {
+          addError('WithholdingDate', 'WithholdingDate harus berformat YYYY-MM-DD.');
+        }
+        if (taxCertificate === 'COD') {
+          if (!receipt) addError('BP26 CounterpartReceiptNumber', 'BP26 CounterpartReceiptNumber wajib diisi untuk COD.');
+          if (!deemed) addError('BP26 Deemed', 'BP26 Deemed wajib diisi untuk COD.');
+          if (!rate) addError('BP26 Rate', 'BP26 Rate wajib diisi untuk COD.');
+        }
+      }
     }
   });
 
@@ -352,6 +402,8 @@ export default function TaxelingPage() {
   const [selectedNik, setSelectedNik] = useState<string | null>(null);
   const [isBpmpModalOpen, setIsBpmpModalOpen] = useState(false);
   const [isBp21ModalOpen, setIsBp21ModalOpen] = useState(false);
+  const [isBp26ModalOpen, setIsBp26ModalOpen] = useState(false);
+  const [isBpa1ModalOpen, setIsBpa1ModalOpen] = useState(false);
   const [employeeFilter, setEmployeeFilter] = useState<EmployeeFilter>('ALL');
   const [slipExportNik, setSlipExportNik] = useState<string | null>(null);
   const [isExportingAllSlip, setIsExportingAllSlip] = useState(false);
@@ -389,6 +441,22 @@ export default function TaxelingPage() {
       withholdingDate: formatDateInputValue(today),
     };
   });
+  const [bp26Settings, setBp26Settings] = useState<BpmpModalSettings>(() => {
+    const today = new Date();
+    return {
+      taxPeriodMonth: 10,
+      taxPeriodYear: today.getFullYear(),
+      withholdingDate: formatDateInputValue(today),
+    };
+  });
+  const [bpa1Settings, setBpa1Settings] = useState<BpmpModalSettings>(() => {
+    const today = new Date();
+    return {
+      taxPeriodMonth: 12,
+      taxPeriodYear: today.getFullYear(),
+      withholdingDate: formatDateInputValue(today),
+    };
+  });
 
   const employeeList = useMemo(() => Object.values(employees), [employees]);
   const activeEmp = selectedNik ? employees[selectedNik] : null;
@@ -410,6 +478,22 @@ export default function TaxelingPage() {
   const isPeriodLocked = lockedPeriodKey === currentPeriodKey;
   const hasReviewIssue = useCallback((emp: EmployeeListItem): boolean => {
     if (emp.karyawan.tipeKaryawan === 'PEGAWAI_TIDAK_TETAP') return true;
+    if (emp.karyawan.tipeKaryawan === 'TETAP' && emp.karyawan.residentStatus === 'NON_RESIDENT') {
+      const metadata = emp.karyawan.bp26;
+      return !metadata ||
+        !metadata.counterpartTin ||
+        !metadata.country ||
+        !metadata.address ||
+        !metadata.dateOfBirth ||
+        !metadata.birthCity ||
+        !metadata.documentType ||
+        !metadata.documentNumber ||
+        !metadata.documentDate ||
+        (metadata.taxCertificate === 'COD' &&
+          (!metadata.hasExplicitReceiptNumber ||
+            !metadata.hasExplicitDeemed ||
+            !metadata.hasExplicitRate));
+    }
     if (emp.karyawan.tipeKaryawan !== 'NON_PEGAWAI') return false;
 
     const metadata = emp.karyawan.bp21;
@@ -460,11 +544,46 @@ export default function TaxelingPage() {
     !!emp.monthlyHasils[masaPajak] &&
     emp.monthlyHasils[masaPajak].totalBruto > 0;
 
+  const isReceiptEligible = (emp: EmployeeListItem): boolean =>
+    emp.karyawan.tipeKaryawan === 'NON_PEGAWAI' &&
+    !!emp.monthlyInputs[masaPajak] &&
+    !!emp.monthlyHasils[masaPajak] &&
+    emp.monthlyHasils[masaPajak].totalBruto > 0;
+
+  const isPaymentDocumentEligible = (emp: EmployeeListItem): boolean =>
+    isSlipEligible(emp) || isReceiptEligible(emp);
+
   const bp21EligibleEmployees = useMemo(
     () =>
       employeeList.filter(
         (emp) =>
           emp.karyawan.tipeKaryawan === 'NON_PEGAWAI' &&
+          !!emp.monthlyInputs[masaPajak] &&
+          !!emp.monthlyHasils[masaPajak] &&
+          emp.monthlyHasils[masaPajak].totalBruto > 0
+      ),
+    [employeeList, masaPajak]
+  );
+
+  const bp26EligibleEmployees = useMemo(
+    () =>
+      employeeList.filter(
+        (emp) =>
+          emp.karyawan.tipeKaryawan === 'TETAP' &&
+          emp.karyawan.residentStatus === 'NON_RESIDENT' &&
+          !!emp.monthlyInputs[masaPajak] &&
+          !!emp.monthlyHasils[masaPajak] &&
+          emp.monthlyHasils[masaPajak].totalBruto > 0
+      ),
+    [employeeList, masaPajak]
+  );
+
+  const bpa1EligibleEmployees = useMemo(
+    () =>
+      employeeList.filter(
+        (emp) =>
+          emp.karyawan.tipeKaryawan === 'TETAP' &&
+          emp.karyawan.bulanSelesai === masaPajak &&
           !!emp.monthlyInputs[masaPajak] &&
           !!emp.monthlyHasils[masaPajak] &&
           emp.monthlyHasils[masaPajak].totalBruto > 0
@@ -537,6 +656,8 @@ export default function TaxelingPage() {
           karyawan: emp.karyawan,
           input: emp.monthlyInputs[masaPajak],
           hasil: emp.monthlyHasils[masaPajak],
+          monthlyInputs: emp.monthlyInputs,
+          monthlyHasils: emp.monthlyHasils,
         },
       ])
     );
@@ -746,6 +867,28 @@ export default function TaxelingPage() {
     setIsBp21ModalOpen(true);
   };
 
+  const openBp26Modal = () => {
+    const today = new Date();
+    setBp26Settings({
+      taxPeriodMonth: masaPajak,
+      taxPeriodYear: tahunPayroll,
+      withholdingDate: formatDateInputValue(today),
+    });
+    setExportError(null);
+    setIsBp26ModalOpen(true);
+  };
+
+  const openBpa1Modal = () => {
+    const today = new Date();
+    setBpa1Settings({
+      taxPeriodMonth: masaPajak,
+      taxPeriodYear: tahunPayroll,
+      withholdingDate: formatDateInputValue(today),
+    });
+    setExportError(null);
+    setIsBpa1ModalOpen(true);
+  };
+
   const closeBpmpModal = () => {
     setIsBpmpModalOpen(false);
   };
@@ -754,12 +897,21 @@ export default function TaxelingPage() {
     setIsBp21ModalOpen(false);
   };
 
+  const closeBp26Modal = () => {
+    setIsBp26ModalOpen(false);
+  };
+
+  const closeBpa1Modal = () => {
+    setIsBpa1ModalOpen(false);
+  };
+
   const downloadXML = (settings: BpmpModalSettings) => {
     try {
       const data = employeeList
         .filter(
           (emp) =>
             emp.karyawan.tipeKaryawan === 'TETAP' &&
+            emp.karyawan.residentStatus === 'RESIDENT' &&
             emp.monthlyHasils[settings.taxPeriodMonth]?.totalBruto > 0
         )
         .map((emp) => ({
@@ -768,7 +920,7 @@ export default function TaxelingPage() {
         }));
 
       if (data.length === 0) {
-        throw new Error('Tidak ada pegawai tetap aktif untuk export BPMP.');
+        throw new Error('Tidak ada pegawai tetap resident aktif untuk export BPMP.');
       }
 
       const xml = generateBpmpXml(
@@ -856,9 +1008,120 @@ export default function TaxelingPage() {
     }
   };
 
+  const downloadBP26XML = (settings: BpmpModalSettings) => {
+    try {
+      const data = employeeList
+        .filter(
+          (emp) =>
+            emp.karyawan.tipeKaryawan === 'TETAP' &&
+            emp.karyawan.residentStatus === 'NON_RESIDENT' &&
+            emp.monthlyHasils[settings.taxPeriodMonth]?.totalBruto > 0
+        )
+        .map((emp) => ({
+          karyawan: emp.karyawan,
+          hasilKalkulasi: emp.monthlyHasils[settings.taxPeriodMonth],
+        }));
+
+      if (data.length === 0) {
+        throw new Error('Tidak ada pegawai asing non-resident aktif untuk export BP26.');
+      }
+
+      const xml = generateBp26Xml(
+        {
+          namaPerusahaan: companyProfile.namaPerusahaan,
+          npwpPemotong: companyProfile.npwpPemotong,
+          idTku: companyProfile.idTku,
+        },
+        data,
+        {
+          taxPeriodMonth: settings.taxPeriodMonth,
+          taxPeriodYear: settings.taxPeriodYear,
+          withholdingDate: settings.withholdingDate,
+          strict: true,
+        }
+      );
+
+      downloadBp26Xml(
+        xml,
+        `BP26_${settings.taxPeriodYear}-${String(settings.taxPeriodMonth).padStart(2, '0')}.xml`
+      );
+      setExportError(null);
+      void recordPayrollAuditEvent({
+        eventType: 'GENERATE_XML',
+        companyProfile,
+        periodMonth: settings.taxPeriodMonth,
+        periodYear: settings.taxPeriodYear,
+        description: `Generate XML BP26 masa ${settings.taxPeriodMonth}/${settings.taxPeriodYear}`,
+        metadata: {
+          employeeCount: data.length,
+          withholdingDate: settings.withholdingDate,
+        },
+      });
+      closeBp26Modal();
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Gagal export XML BP26.');
+    }
+  };
+
+  const downloadBPA1XML = (settings: BpmpModalSettings) => {
+    try {
+      const data = employeeList
+        .filter(
+          (emp) =>
+            emp.karyawan.tipeKaryawan === 'TETAP' &&
+            emp.karyawan.bulanSelesai === settings.taxPeriodMonth &&
+            emp.monthlyHasils[settings.taxPeriodMonth]?.totalBruto > 0
+        )
+        .map((emp) => ({
+          karyawan: emp.karyawan,
+          monthlyInputs: emp.monthlyInputs,
+          monthlyHasils: emp.monthlyHasils,
+        }));
+
+      if (data.length === 0) {
+        throw new Error('Tidak ada pegawai tetap pada masa pajak terakhir untuk export BPA1.');
+      }
+
+      const xml = generateBpa1Xml(
+        {
+          namaPerusahaan: companyProfile.namaPerusahaan,
+          npwpPemotong: companyProfile.npwpPemotong,
+          idTku: companyProfile.idTku,
+        },
+        data,
+        {
+          taxPeriodMonth: settings.taxPeriodMonth,
+          taxPeriodYear: settings.taxPeriodYear,
+          withholdingDate: settings.withholdingDate,
+          strict: true,
+        }
+      );
+
+      downloadBpa1Xml(
+        xml,
+        `BPA1_${settings.taxPeriodYear}-${String(settings.taxPeriodMonth).padStart(2, '0')}.xml`
+      );
+      setExportError(null);
+      void recordPayrollAuditEvent({
+        eventType: 'GENERATE_XML',
+        companyProfile,
+        periodMonth: settings.taxPeriodMonth,
+        periodYear: settings.taxPeriodYear,
+        description: `Generate XML BPA1 masa terakhir ${settings.taxPeriodMonth}/${settings.taxPeriodYear}`,
+        metadata: {
+          employeeCount: data.length,
+          withholdingDate: settings.withholdingDate,
+        },
+      });
+      closeBpa1Modal();
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Gagal export XML BPA1.');
+    }
+  };
+
   const handleDownloadSlip = async (emp: EmployeeListItem) => {
-    if (!isSlipEligible(emp)) {
-      setExportError('Slip gaji hanya tersedia untuk pegawai TETAP yang punya hasil di periode aktif.');
+    if (!isPaymentDocumentEligible(emp)) {
+      setExportError('Dokumen PDF hanya tersedia untuk pegawai tetap atau bukan pegawai yang punya hasil di periode aktif.');
       return;
     }
 
@@ -866,18 +1129,22 @@ export default function TaxelingPage() {
     setExportError(null);
 
     try {
-      await downloadSlipGajiPdf(toSlipSource(emp));
+      if (isReceiptEligible(emp)) {
+        await downloadReceiptPembayaranPdf(toSlipSource(emp));
+      } else {
+        await downloadSlipGajiPdf(toSlipSource(emp));
+      }
       void recordPayrollAuditEvent({
         eventType: 'DOWNLOAD_SLIP',
         companyProfile,
         periodMonth: masaPajak,
         periodYear: tahunPayroll,
-        description: `Download slip gaji ${emp.karyawan.namaLengkap}`,
+        description: `Download ${isReceiptEligible(emp) ? 'receipt pembayaran' : 'slip gaji'} ${emp.karyawan.namaLengkap}`,
         metadata: { nik: emp.karyawan.nik },
       });
     } catch (error) {
       setExportError(
-        error instanceof Error ? error.message : 'Gagal membuat slip gaji PDF.'
+        error instanceof Error ? error.message : 'Gagal membuat dokumen PDF.'
       );
     } finally {
       setSlipExportNik(null);
@@ -1422,6 +1689,28 @@ export default function TaxelingPage() {
                 >
                   Generate XML BP21
                 </Button>
+                <Button
+                  onClick={openBp26Modal}
+                  disabled={bp26EligibleEmployees.length === 0}
+                  className={`h-10 rounded-xl px-6 text-xs font-black focus-visible:ring-[#6CA6C1]/30 ${
+                    bp26EligibleEmployees.length === 0
+                      ? 'cursor-not-allowed bg-[#343434]/70 text-[#F7FFF7]/40'
+                      : 'border border-[#6CA6C1]/50 bg-[#343434]/80 text-[#6CA6C1] hover:bg-[#6CA6C1] hover:text-[#343434]'
+                  }`}
+                >
+                  Generate XML BP26
+                </Button>
+                <Button
+                  onClick={openBpa1Modal}
+                  disabled={bpa1EligibleEmployees.length === 0}
+                  className={`h-10 rounded-xl px-6 text-xs font-black focus-visible:ring-[#6CA6C1]/30 ${
+                    bpa1EligibleEmployees.length === 0
+                      ? 'cursor-not-allowed bg-[#343434]/70 text-[#F7FFF7]/40'
+                      : 'border border-[#6CA6C1]/50 bg-[#343434]/80 text-[#6CA6C1] hover:bg-[#6CA6C1] hover:text-[#343434]'
+                  }`}
+                >
+                  Generate XML BPA1
+                </Button>
               </div>
             </div>
             <div className="flex flex-wrap gap-2 border-b border-[#6CA6C1]/20 bg-[#343434]/35 px-6 py-4">
@@ -1464,6 +1753,8 @@ export default function TaxelingPage() {
                     const input = emp.monthlyInputs[masaPajak];
                     const result = emp.monthlyHasils[masaPajak];
                     const slipEligible = isSlipEligible(emp);
+                    const receiptEligible = isReceiptEligible(emp);
+                    const paymentDocumentEligible = slipEligible || receiptEligible;
                     const isGeneratingSlip =
                       slipExportNik === emp.karyawan.idKaryawan;
                     return (
@@ -1536,14 +1827,18 @@ export default function TaxelingPage() {
                             </Button>
                             <Button
                               onClick={() => void handleDownloadSlip(emp)}
-                              disabled={!slipEligible || isGeneratingSlip || isExportingAllSlip}
+                              disabled={!paymentDocumentEligible || isGeneratingSlip || isExportingAllSlip}
                               className={`h-9 rounded-lg px-3 text-xs font-bold focus-visible:ring-[#FFE66D]/30 ${
-                                !slipEligible || isGeneratingSlip || isExportingAllSlip
+                                !paymentDocumentEligible || isGeneratingSlip || isExportingAllSlip
                                   ? 'cursor-not-allowed border border-[#6CA6C1]/15 bg-[#343434]/50 text-[#F7FFF7]/35'
                                   : 'border border-[#FFE66D]/50 bg-[#FFE66D]/10 text-[#FFE66D] hover:bg-[#FFE66D] hover:text-[#343434]'
                               }`}
                             >
-                              {isGeneratingSlip ? 'Membuat...' : 'Slip PDF'}
+                              {isGeneratingSlip
+                                ? 'Membuat...'
+                                : receiptEligible
+                                  ? 'Receipt PDF'
+                                  : 'Slip PDF'}
                             </Button>
                           </div>
                         </TableCell>
@@ -1792,6 +2087,272 @@ export default function TaxelingPage() {
                   className="h-11 rounded-xl bg-[#FFE66D] px-5 text-xs font-black text-[#343434] transition-colors hover:bg-[#F7FFF7] focus-visible:ring-[#FFE66D]/30"
                 >
                   Download XML BP21
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isBp26ModalOpen && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+            <button
+              aria-label="Tutup modal Generate XML BP26"
+              className="absolute inset-0"
+              onClick={closeBp26Modal}
+            />
+            <div className="relative z-10 w-full max-w-xl rounded-3xl border border-[#6CA6C1]/30 bg-[#2F3061] p-6 text-[#F7FFF7] shadow-2xl">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-[#FFE66D]">Generate XML BP26</h3>
+                  <p className="mt-2 text-xs text-[#F7FFF7]/65">
+                    Export pegawai tetap non-resident dengan format BP26Bulk.
+                  </p>
+                </div>
+                <Button
+                  onClick={closeBp26Modal}
+                  className="h-9 rounded-lg border border-[#6CA6C1]/40 bg-[#343434]/80 px-3 text-xs font-bold text-[#F7FFF7] transition-colors hover:bg-[#6CA6C1] hover:text-[#343434] focus-visible:ring-[#6CA6C1]/30"
+                >
+                  Tutup
+                </Button>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Masa Pajak
+                  </label>
+                  <Select
+                    value={String(bp26Settings.taxPeriodMonth)}
+                    onValueChange={(value) =>
+                      setBp26Settings((prev) => ({
+                        ...prev,
+                        taxPeriodMonth: Number(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Pilih masa pajak" />
+                    </SelectTrigger>
+                    <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                      <SelectGroup>
+                        {[...Array(12)].map((_, i) => (
+                          <SelectItem
+                            key={i + 1}
+                            value={String(i + 1)}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            Bulan {i + 1}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Tahun Pajak
+                  </label>
+                  <Select
+                    value={String(bp26Settings.taxPeriodYear)}
+                    onValueChange={(value) =>
+                      setBp26Settings((prev) => ({
+                        ...prev,
+                        taxPeriodYear: Number(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Pilih tahun pajak" />
+                    </SelectTrigger>
+                    <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                      <SelectGroup>
+                        {availableTaxYears.map((year) => (
+                          <SelectItem
+                            key={year}
+                            value={String(year)}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            {year}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Tanggal Pemotongan
+                  </label>
+                  <Input
+                    type="date"
+                    value={bp26Settings.withholdingDate}
+                    onChange={(e) =>
+                      setBp26Settings((prev) => ({
+                        ...prev,
+                        withholdingDate: e.target.value,
+                      }))
+                    }
+                    className={TABLE_INPUT_CLASS}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-[#6CA6C1]/20 bg-[#343434]/60 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[#F7FFF7]/45">
+                  Eligible Periode Aktif
+                </div>
+                <div className="mt-2 text-2xl font-black text-[#6CA6C1]">
+                  {bp26EligibleEmployees.length} pegawai
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-[#F7FFF7]/55">
+                  TaxCertificate COD wajib punya receipt, deemed, dan rate dari Excel.
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] text-[#F7FFF7]/55">
+                  BPMP hanya mengambil pegawai resident; non-resident diexport dari modal ini.
+                </p>
+                <Button
+                  onClick={() => downloadBP26XML(bp26Settings)}
+                  className="h-11 rounded-xl bg-[#FFE66D] px-5 text-xs font-black text-[#343434] transition-colors hover:bg-[#F7FFF7] focus-visible:ring-[#FFE66D]/30"
+                >
+                  Download XML BP26
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isBpa1ModalOpen && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+            <button
+              aria-label="Tutup modal Generate XML BPA1"
+              className="absolute inset-0"
+              onClick={closeBpa1Modal}
+            />
+            <div className="relative z-10 w-full max-w-xl rounded-3xl border border-[#6CA6C1]/30 bg-[#2F3061] p-6 text-[#F7FFF7] shadow-2xl">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-black text-[#FFE66D]">Generate XML BPA1</h3>
+                  <p className="mt-2 text-xs text-[#F7FFF7]/65">
+                    Export A1Bulk untuk pegawai tetap pada masa pajak terakhir.
+                  </p>
+                </div>
+                <Button
+                  onClick={closeBpa1Modal}
+                  className="h-9 rounded-lg border border-[#6CA6C1]/40 bg-[#343434]/80 px-3 text-xs font-bold text-[#F7FFF7] transition-colors hover:bg-[#6CA6C1] hover:text-[#343434] focus-visible:ring-[#6CA6C1]/30"
+                >
+                  Tutup
+                </Button>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Masa Terakhir
+                  </label>
+                  <Select
+                    value={String(bpa1Settings.taxPeriodMonth)}
+                    onValueChange={(value) =>
+                      setBpa1Settings((prev) => ({
+                        ...prev,
+                        taxPeriodMonth: Number(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Pilih masa terakhir" />
+                    </SelectTrigger>
+                    <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                      <SelectGroup>
+                        {[...Array(12)].map((_, i) => (
+                          <SelectItem
+                            key={i + 1}
+                            value={String(i + 1)}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            Bulan {i + 1}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Tahun Pajak
+                  </label>
+                  <Select
+                    value={String(bpa1Settings.taxPeriodYear)}
+                    onValueChange={(value) =>
+                      setBpa1Settings((prev) => ({
+                        ...prev,
+                        taxPeriodYear: Number(value),
+                      }))
+                    }
+                  >
+                    <SelectTrigger className={SETTINGS_SELECT_TRIGGER_CLASS}>
+                      <SelectValue placeholder="Pilih tahun pajak" />
+                    </SelectTrigger>
+                    <SelectContent className={SETTINGS_SELECT_CONTENT_CLASS}>
+                      <SelectGroup>
+                        {availableTaxYears.map((year) => (
+                          <SelectItem
+                            key={year}
+                            value={String(year)}
+                            className={SETTINGS_SELECT_ITEM_CLASS}
+                          >
+                            {year}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 px-4 pb-4 pt-3">
+                  <label className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-[#F7FFF7]/60">
+                    Tanggal Pemotongan
+                  </label>
+                  <Input
+                    type="date"
+                    value={bpa1Settings.withholdingDate}
+                    onChange={(e) =>
+                      setBpa1Settings((prev) => ({
+                        ...prev,
+                        withholdingDate: e.target.value,
+                      }))
+                    }
+                    className={TABLE_INPUT_CLASS}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-[#6CA6C1]/20 bg-[#343434]/60 p-4">
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-[#F7FFF7]/45">
+                  Eligible Periode Aktif
+                </div>
+                <div className="mt-2 text-2xl font-black text-[#6CA6C1]">
+                  {bpa1EligibleEmployees.length} pegawai
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-[#F7FFF7]/55">
+                  Sistem memakai total bulan aktif, lalu kolom override BPA1 dari Excel jika tersedia.
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[11px] text-[#F7FFF7]/55">
+                  Export ini memakai format A1Bulk sesuai file acuan BPA1.
+                </p>
+                <Button
+                  onClick={() => downloadBPA1XML(bpa1Settings)}
+                  className="h-11 rounded-xl bg-[#FFE66D] px-5 text-xs font-black text-[#343434] transition-colors hover:bg-[#F7FFF7] focus-visible:ring-[#FFE66D]/30"
+                >
+                  Download XML BPA1
                 </Button>
               </div>
             </div>

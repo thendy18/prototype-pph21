@@ -47,6 +47,8 @@ export type PayrollHistoryEmployeeSnapshot = {
   karyawan: DataKaryawan;
   input: InputGajiBulanan;
   hasil: HasilKalkulasiTetap;
+  monthlyInputs?: Record<number, InputGajiBulanan>;
+  monthlyHasils?: Record<number, HasilKalkulasiTetap>;
 };
 
 export type PayrollPeriodHistoryDetail = PayrollPeriodHistoryListItem & {

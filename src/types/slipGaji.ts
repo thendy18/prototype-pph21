@@ -53,3 +53,38 @@ export interface SlipGajiPayload {
     thp: number;
   };
 }
+
+export interface ReceiptPembayaranPayload {
+  companyName: string;
+  period: {
+    month: number;
+    year: number;
+    label: string;
+  };
+  recipient: {
+    id: string;
+    nik: string;
+    nama: string;
+    residentStatus: DataKaryawan['residentStatus'];
+    statusIdentitas: DataKaryawan['statusIdentitas'];
+    metodePajak: MetodePajak;
+    jenisPenerima: DataKaryawan['tipeKaryawan'];
+  };
+  tax: {
+    taxObjectCode: string;
+    taxCertificate: string;
+    deemedPercent: number;
+    ratePercent: number;
+    gross: number;
+    taxBase: number;
+    taxWithheld: number;
+    netPaid: number;
+  };
+  document: {
+    type: string;
+    number: string;
+    date: string;
+    withholdingDate: string;
+    idTkuPenerima: string;
+  };
+}

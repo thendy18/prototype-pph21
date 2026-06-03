@@ -66,6 +66,10 @@ const baseData = {
           title: "Histori Periode",
           url: "/history",
         },
+        {
+          title: "Template Excel",
+          url: "/template-excel",
+        },
       ],
     },
   ],

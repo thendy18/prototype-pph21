@@ -1,10 +1,13 @@
 import { create } from 'xmlbuilder2';
 import type { XMLBuilder } from 'xmlbuilder2/lib/interfaces';
 import {
+  Bp26TaxCertificate,
+  Bpa1StatusOfWithholding,
   DataKaryawan,
   DataPerusahaan,
   FasilitasPajak,
   HasilKalkulasiTetap,
+  InputGajiBulanan,
 } from '../types/payroll';
 
 const VALID_TAX_CERTIFICATES: readonly FasilitasPajak[] = [
@@ -26,6 +29,19 @@ export interface DataExportBulanIni {
 export interface DataExportBp21 {
   karyawan: DataKaryawan;
   hasilKalkulasi: HasilKalkulasiTetap;
+}
+
+export interface DataExportBp26 {
+  karyawan: DataKaryawan;
+  hasilKalkulasi: HasilKalkulasiTetap;
+}
+
+export interface DataExportBpa1 {
+  karyawan: DataKaryawan;
+  monthlyInputs?: Record<number, InputGajiBulanan>;
+  monthlyHasils?: Record<number, HasilKalkulasiTetap>;
+  input?: InputGajiBulanan;
+  hasilKalkulasi?: HasilKalkulasiTetap;
 }
 
 export interface BpmpGlobalSettings {
@@ -123,6 +139,14 @@ function normalizeTaxCertificate(value: unknown): FasilitasPajak {
   return 'N/A';
 }
 
+function normalizeBp26TaxCertificate(value: unknown): Bp26TaxCertificate {
+  const raw = String(value ?? 'N/A').trim().toUpperCase();
+  if (raw === 'DTP') return 'DTP';
+  if (raw === 'COD') return 'COD';
+  if (raw === 'ETC') return 'ETC';
+  return 'N/A';
+}
+
 function resolveCounterpartOpt(
   karyawan: DataKaryawan
 ): 'Resident' | 'Non-Resident' {
@@ -160,6 +184,20 @@ function resolveTaxObjectCode(karyawan: DataKaryawan): string {
   }
 
   return '21-100-01';
+}
+
+function resolveBpa1TaxObjectCode(karyawan: DataKaryawan): string {
+  return karyawan.bpa1?.taxObjectCode?.trim() || '21-100-01';
+}
+
+function floorRupiah(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+}
+
+function sumNumbers(values: number[]): number {
+  return values.reduce((sum, value) => sum + floorRupiah(value), 0);
 }
 
 function requireText(value: unknown, label: string): string {
@@ -332,6 +370,16 @@ function appendStatusTaxExemption(
   mmPayroll.ele('StatusTaxExemption', { 'xsi:nil': 'true' }).up();
 }
 
+function appendNilOrText(parent: XMLBuilder, tagName: string, value?: string | null): void {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    parent.ele(tagName, { 'xsi:nil': 'true' }).up();
+    return;
+  }
+
+  parent.ele(tagName).txt(normalized).up();
+}
+
 export function generateBpmpXml(
   perusahaan: DataPerusahaan,
   dataKaryawan: DataExportBulanIni[],
@@ -479,6 +527,438 @@ export function generateBp21Xml(
   return root.end({ prettyPrint: true });
 }
 
+function validateBp26Record(record: DataExportBp26): string[] {
+  const issues: string[] = [];
+  const { karyawan, hasilKalkulasi } = record;
+  const metadata = karyawan.bp26;
+
+  if (karyawan.tipeKaryawan !== 'TETAP') {
+    issues.push(`BP26 ${karyawan.namaLengkap} hanya untuk pegawai tetap`);
+  }
+
+  if (karyawan.residentStatus !== 'NON_RESIDENT') {
+    issues.push(`BP26 ${karyawan.namaLengkap} hanya untuk Non-Resident`);
+  }
+
+  if (!metadata) {
+    issues.push(`metadata BP26 ${karyawan.namaLengkap} belum tersedia`);
+    return issues;
+  }
+
+  if (!metadata.counterpartTin?.trim()) {
+    issues.push(`BP26 CounterpartTin ${karyawan.namaLengkap} wajib diisi`);
+  }
+
+  if (!metadata.country?.trim()) {
+    issues.push(`BP26 Country ${karyawan.namaLengkap} wajib diisi`);
+  }
+
+  if (!metadata.address?.trim()) {
+    issues.push(`BP26 Address ${karyawan.namaLengkap} wajib diisi`);
+  }
+
+  if (!metadata.dateOfBirth || !isValidIsoDate(metadata.dateOfBirth)) {
+    issues.push(`BP26 Date Of Birth ${karyawan.namaLengkap} harus berformat YYYY-MM-DD`);
+  }
+
+  if (!metadata.birthCity?.trim()) {
+    issues.push(`BP26 Birth City ${karyawan.namaLengkap} wajib diisi`);
+  }
+
+  if (!metadata.documentType?.trim()) {
+    issues.push(`Document ${karyawan.namaLengkap} wajib diisi untuk BP26`);
+  }
+
+  if (!metadata.documentNumber?.trim()) {
+    issues.push(`DocumentNumber ${karyawan.namaLengkap} wajib diisi untuk BP26`);
+  }
+
+  if (!metadata.documentDate || !isValidIsoDate(metadata.documentDate)) {
+    issues.push(`DocumentDate ${karyawan.namaLengkap} harus berformat YYYY-MM-DD untuk BP26`);
+  }
+
+  if (metadata.withholdingDate && !isValidIsoDate(metadata.withholdingDate)) {
+    issues.push(`WithholdingDate ${karyawan.namaLengkap} harus berformat YYYY-MM-DD`);
+  }
+
+  const taxCertificate = normalizeBp26TaxCertificate(metadata.taxCertificate);
+  if (taxCertificate === 'COD') {
+    if (!metadata.hasExplicitReceiptNumber || metadata.counterpartReceiptNumber === '-') {
+      issues.push(`BP26 CounterpartReceiptNumber ${karyawan.namaLengkap} wajib diisi untuk COD`);
+    }
+    if (!metadata.hasExplicitDeemed) {
+      issues.push(`BP26 Deemed ${karyawan.namaLengkap} wajib diisi untuk COD`);
+    }
+    if (!metadata.hasExplicitRate) {
+      issues.push(`BP26 Rate ${karyawan.namaLengkap} wajib diisi untuk COD`);
+    }
+  }
+
+  if (hasilKalkulasi.totalBruto < 0) {
+    issues.push(`BP26 ${karyawan.namaLengkap} memiliki Gross negatif`);
+  }
+
+  return issues;
+}
+
+function resolveBp26Number(value: number | undefined, fallback: number): string {
+  return trimTrailingZeros(
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  );
+}
+
+export function generateBp26Xml(
+  perusahaan: DataPerusahaan,
+  dataBp26: DataExportBp26[],
+  settings: BpmpGlobalSettings
+): string {
+  const strict = settings.strict ?? true;
+  const header = validateHeader(perusahaan, settings);
+
+  const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(
+    'BP26Bulk',
+    {
+      'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+    }
+  );
+
+  root.ele('TIN').txt(header.tin).up();
+
+  const listOfBp26 = root.ele('ListOfBP26');
+
+  dataBp26.forEach((record) => {
+    const issues = validateBp26Record(record);
+    if (issues.length > 0) {
+      const message = issues.join('; ');
+      if (strict) {
+        throw new Error(`Data export BP26 tidak valid: ${message}`);
+      }
+      console.warn(`[Peringatan Export XML BP26] ${message}`);
+      return;
+    }
+
+    const { karyawan, hasilKalkulasi } = record;
+    const metadata = karyawan.bp26;
+    if (!metadata) return;
+
+    const withholdingDate = metadata.withholdingDate || header.withholdingDate;
+    const bp26 = listOfBp26.ele('BP26');
+
+    bp26.ele('TaxPeriodMonth').txt(String(settings.taxPeriodMonth)).up();
+    bp26.ele('TaxPeriodYear').txt(String(settings.taxPeriodYear)).up();
+    bp26.ele('CounterpartTin').txt(requireText(metadata.counterpartTin, 'BP26 CounterpartTin')).up();
+    bp26.ele('CounterpartReceiptNumber').txt(metadata.counterpartReceiptNumber || '-').up();
+    bp26.ele('CounterpartName').txt(requireText(karyawan.namaLengkap, 'CounterpartName')).up();
+    bp26.ele('CounterpartCountry').txt(requireText(metadata.country, 'BP26 Country')).up();
+    bp26.ele('CounterpartAddress').txt(requireText(metadata.address, 'BP26 Address')).up();
+    bp26.ele('CounterpartDob').txt(metadata.dateOfBirth).up();
+    bp26.ele('CounterpartBirthCity').txt(requireText(metadata.birthCity, 'BP26 Birth City')).up();
+    appendNilOrText(bp26, 'CounterpartPassport', karyawan.noPaspor);
+    appendNilOrText(bp26, 'CounterpartKitas', metadata.kitas);
+    bp26.ele('TaxCertificate').txt(normalizeBp26TaxCertificate(metadata.taxCertificate)).up();
+    bp26.ele('TaxObjectCode').txt(metadata.taxObjectCode?.trim() || '27-100-99').up();
+    bp26.ele('Gross').txt(resolveGross(hasilKalkulasi)).up();
+    bp26.ele('Deemed').txt(resolveBp26Number(metadata.deemed, 100)).up();
+    bp26.ele('Rate').txt(resolveBp26Number(metadata.rate, 20)).up();
+    bp26.ele('Document').txt(requireText(metadata.documentType, 'Document')).up();
+    bp26.ele('DocumentNumber').txt(requireText(metadata.documentNumber, 'DocumentNumber')).up();
+    bp26.ele('DocumentDate').txt(metadata.documentDate).up();
+    bp26.ele('IDPlaceOfBusinessActivity').txt(header.idPlaceOfBusinessActivity).up();
+    bp26.ele('WithholdingDate').txt(withholdingDate).up();
+    bp26.up();
+  });
+
+  return root.end({ prettyPrint: true });
+}
+
+function getBpa1MonthRange(karyawan: DataKaryawan): {
+  start: number;
+  end: number;
+  count: number;
+} {
+  const start = Math.min(Math.max(floorRupiah(karyawan.bulanMulai) || 1, 1), 12);
+  const endRaw = Math.min(Math.max(floorRupiah(karyawan.bulanSelesai) || 12, 1), 12);
+  const end = Math.max(start, endRaw);
+
+  return {
+    start,
+    end,
+    count: end - start + 1,
+  };
+}
+
+function resolveBpa1StatusOfWithholding(karyawan: DataKaryawan): Bpa1StatusOfWithholding {
+  if (karyawan.bpa1?.statusOfWithholding) {
+    return karyawan.bpa1.statusOfWithholding;
+  }
+
+  const range = getBpa1MonthRange(karyawan);
+  if (range.start === 1 && range.end === 12) return 'FullYear';
+  if (!karyawan.subjekPajakSejakAwalTahun) return 'Annualized';
+  return 'PartialYear';
+}
+
+function resolveBpa1NumberOfMonths(
+  karyawan: DataKaryawan,
+  statusOfWithholding: Bpa1StatusOfWithholding
+): number {
+  if (typeof karyawan.bpa1?.numberOfMonths === 'number') {
+    return floorRupiah(karyawan.bpa1.numberOfMonths);
+  }
+
+  if (statusOfWithholding === 'Annualized') {
+    return getBpa1MonthRange(karyawan).count;
+  }
+
+  return 0;
+}
+
+function getBpa1Inputs(record: DataExportBpa1): InputGajiBulanan[] {
+  const range = getBpa1MonthRange(record.karyawan);
+  if (record.monthlyInputs) {
+    return Object.values(record.monthlyInputs)
+      .filter((input) => input.bulan >= range.start && input.bulan <= range.end)
+      .sort((a, b) => a.bulan - b.bulan);
+  }
+
+  return record.input ? [record.input] : [];
+}
+
+function getBpa1Hasils(record: DataExportBpa1): HasilKalkulasiTetap[] {
+  const range = getBpa1MonthRange(record.karyawan);
+  if (record.monthlyHasils) {
+    return Object.entries(record.monthlyHasils)
+      .map(([month, hasil]) => ({ month: Number(month), hasil }))
+      .filter((item) => item.month >= range.start && item.month <= range.end)
+      .sort((a, b) => a.month - b.month)
+      .map((item) => item.hasil);
+  }
+
+  return record.hasilKalkulasi ? [record.hasilKalkulasi] : [];
+}
+
+function resolveBpa1Override(
+  value: number | undefined,
+  fallback: number
+): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? floorRupiah(value)
+    : floorRupiah(fallback);
+}
+
+function resolveBpa1Article21IncomeTax(
+  record: DataExportBpa1,
+  hasils: HasilKalkulasiTetap[]
+): number {
+  const override = record.karyawan.bpa1?.article21IncomeTax;
+  if (typeof override === 'number' && Number.isFinite(override)) {
+    return floorRupiah(override);
+  }
+
+  if (record.monthlyHasils) {
+    const range = getBpa1MonthRange(record.karyawan);
+    return Object.entries(record.monthlyHasils)
+      .map(([month, hasil]) => ({ month: Number(month), hasil }))
+      .filter((item) => item.month >= range.start && item.month < range.end)
+      .reduce((sum, item) => sum + floorRupiah(item.hasil.pajakTerutang), 0);
+  }
+
+  return sumNumbers(hasils.map((hasil) => hasil.pajakTerutang));
+}
+
+function aggregateBpa1Record(record: DataExportBpa1): {
+  salaryPensionJhtTht: number;
+  incomeTaxBenefit: number;
+  otherBenefit: number;
+  honorarium: number;
+  insurancePaidByEmployer: number;
+  natura: number;
+  tantiemBonusThr: number;
+  pensionContributionJhtThtFee: number;
+  zakat: number;
+  article21IncomeTax: number;
+} {
+  const inputs = getBpa1Inputs(record);
+  const hasils = getBpa1Hasils(record);
+  const metadata = record.karyawan.bpa1;
+
+  const derivedHonorarium = 0;
+  const honorarium = resolveBpa1Override(metadata?.honorarium, derivedHonorarium);
+  const salaryPensionJhtTht = sumNumbers(inputs.map((input) => input.gajiPokok));
+  const rawOtherBenefit = sumNumbers(
+    inputs.map((input) => input.tunjanganTetap + input.tunjanganVariabel)
+  );
+  const incomeTaxBenefit = resolveBpa1Override(
+    metadata?.incomeTaxBenefit,
+    sumNumbers(hasils.map((hasil) => hasil.tunjanganPajakGrossUp))
+  );
+  const otherBenefit = resolveBpa1Override(
+    metadata?.otherBenefit,
+    Math.max(0, rawOtherBenefit - honorarium)
+  );
+  const insurancePaidByEmployer = resolveBpa1Override(
+    metadata?.insurancePaidByEmployer,
+    sumNumbers(
+      hasils.map(
+        (hasil) =>
+          hasil.premiJkkPerusahaan +
+          hasil.premiJkmPerusahaan +
+          hasil.premiBpjsKesPerusahaan +
+          hasil.premiAsuransiSwastaPerusahaan
+      )
+    )
+  );
+  const natura = resolveBpa1Override(
+    metadata?.natura,
+    sumNumbers(inputs.map((input) => input.naturaTaxable))
+  );
+  const tantiemBonusThr = resolveBpa1Override(
+    metadata?.tantiemBonusThr,
+    sumNumbers(inputs.map((input) => input.thrAtauBonus))
+  );
+  const pensionContributionJhtThtFee = resolveBpa1Override(
+    metadata?.pensionContributionJhtThtFee,
+    sumNumbers(
+      hasils.map(
+        (hasil) =>
+          hasil.iuranJhtKaryawan +
+          hasil.iuranJpKaryawan +
+          hasil.iuranPensiunKaryawan +
+          hasil.potonganDplkKaryawan
+      )
+    )
+  );
+  const zakat = resolveBpa1Override(
+    metadata?.zakat,
+    sumNumbers(inputs.map((input) => input.zakat))
+  );
+
+  return {
+    salaryPensionJhtTht,
+    incomeTaxBenefit,
+    otherBenefit,
+    honorarium,
+    insurancePaidByEmployer,
+    natura,
+    tantiemBonusThr,
+    pensionContributionJhtThtFee,
+    zakat,
+    article21IncomeTax: resolveBpa1Article21IncomeTax(record, hasils),
+  };
+}
+
+function validateBpa1Record(record: DataExportBpa1): string[] {
+  const issues: string[] = [];
+  const { karyawan } = record;
+  const range = getBpa1MonthRange(karyawan);
+
+  if (karyawan.tipeKaryawan !== 'TETAP') {
+    issues.push(`BPA1 ${karyawan.namaLengkap} hanya untuk pegawai tetap`);
+  }
+
+  try {
+    resolveCounterpartTin(karyawan);
+  } catch (error) {
+    issues.push(error instanceof Error ? error.message : 'CounterpartTin tidak valid');
+  }
+
+  if (karyawan.residentStatus === 'NON_RESIDENT' && !karyawan.noPaspor?.trim()) {
+    issues.push(`No Paspor ${karyawan.namaLengkap} wajib diisi untuk Non-Resident`);
+  }
+
+  if (!resolveStatusTaxExemption(karyawan)) {
+    issues.push(`PTKP ${karyawan.namaLengkap} wajib diisi untuk BPA1`);
+  }
+
+  if (!resolvePosition({ karyawan, hasilKalkulasi: getBpa1Hasils(record)[0] ?? ({} as HasilKalkulasiTetap) }).trim()) {
+    issues.push(`Jabatan ${karyawan.namaLengkap} wajib diisi untuk BPA1`);
+  }
+
+  if (range.start < 1 || range.end > 12 || range.end < range.start) {
+    issues.push(`Periode kerja ${karyawan.namaLengkap} tidak valid`);
+  }
+
+  const withholdingDate = karyawan.bpa1?.withholdingDate;
+  if (withholdingDate && !isValidIsoDate(withholdingDate)) {
+    issues.push(`BPA1 WithholdingDate ${karyawan.namaLengkap} harus berformat YYYY-MM-DD`);
+  }
+
+  return issues;
+}
+
+export function generateBpa1Xml(
+  perusahaan: DataPerusahaan,
+  dataBpa1: DataExportBpa1[],
+  settings: BpmpGlobalSettings
+): string {
+  const strict = settings.strict ?? true;
+  const header = validateHeader(perusahaan, settings);
+
+  const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(
+    'A1Bulk',
+    {
+      'xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+    }
+  );
+
+  root.ele('TIN').txt(header.tin).up();
+
+  const listOfA1 = root.ele('ListOfA1');
+
+  dataBpa1.forEach((record) => {
+    const issues = validateBpa1Record(record);
+    if (issues.length > 0) {
+      const message = issues.join('; ');
+      if (strict) {
+        throw new Error(`Data export BPA1 tidak valid: ${message}`);
+      }
+      console.warn(`[Peringatan Export XML BPA1] ${message}`);
+      return;
+    }
+
+    const { karyawan } = record;
+    const range = getBpa1MonthRange(karyawan);
+    const aggregate = aggregateBpa1Record(record);
+    const statusOfWithholding = resolveBpa1StatusOfWithholding(karyawan);
+    const taxCertificate = normalizeTaxCertificate(
+      karyawan.bpa1?.taxCertificate ?? karyawan.fasilitasPajak
+    );
+    const withholdingDate = karyawan.bpa1?.withholdingDate || header.withholdingDate;
+    const a1 = listOfA1.ele('A1');
+
+    a1.ele('WorkForSecondEmployer').txt(karyawan.bpa1?.workForSecondEmployer ?? 'No').up();
+    a1.ele('TaxPeriodMonthStart').txt(String(range.start)).up();
+    a1.ele('TaxPeriodMonthEnd').txt(String(range.end)).up();
+    a1.ele('TaxPeriodYear').txt(String(settings.taxPeriodYear)).up();
+    a1.ele('CounterpartOpt').txt(resolveCounterpartOpt(karyawan)).up();
+    appendNilOrText(a1, 'CounterpartPassport', karyawan.noPaspor);
+    a1.ele('CounterpartTin').txt(resolveCounterpartTin(karyawan)).up();
+    a1.ele('TaxExemptOpt').txt(requireText(resolveStatusTaxExemption(karyawan), 'TaxExemptOpt')).up();
+    a1.ele('StatusOfWithholding').txt(statusOfWithholding).up();
+    a1.ele('CounterpartPosition').txt(resolvePosition({ karyawan, hasilKalkulasi: getBpa1Hasils(record)[0] ?? ({} as HasilKalkulasiTetap) })).up();
+    a1.ele('TaxObjectCode').txt(resolveBpa1TaxObjectCode(karyawan)).up();
+    a1.ele('NumberOfMonths').txt(String(resolveBpa1NumberOfMonths(karyawan, statusOfWithholding))).up();
+    a1.ele('SalaryPensionJhtTht').txt(String(aggregate.salaryPensionJhtTht)).up();
+    a1.ele('GrossUpOpt').txt(karyawan.metodePajak === 'GROSS_UP' ? 'Yes' : 'No').up();
+    a1.ele('IncomeTaxBenefit').txt(String(aggregate.incomeTaxBenefit)).up();
+    a1.ele('OtherBenefit').txt(String(aggregate.otherBenefit)).up();
+    a1.ele('Honorarium').txt(String(aggregate.honorarium)).up();
+    a1.ele('InsurancePaidByEmployer').txt(String(aggregate.insurancePaidByEmployer)).up();
+    a1.ele('Natura').txt(String(aggregate.natura)).up();
+    a1.ele('TantiemBonusThr').txt(String(aggregate.tantiemBonusThr)).up();
+    a1.ele('PensionContributionJhtThtFee').txt(String(aggregate.pensionContributionJhtThtFee)).up();
+    a1.ele('Zakat').txt(String(aggregate.zakat)).up();
+    appendNilOrText(a1, 'PrevWhTaxSlip', karyawan.bpa1?.prevWhTaxSlip);
+    a1.ele('TaxCertificate').txt(taxCertificate).up();
+    a1.ele('Article21IncomeTax').txt(String(aggregate.article21IncomeTax)).up();
+    a1.ele('IDPlaceOfBusinessActivity').txt(header.idPlaceOfBusinessActivity).up();
+    a1.ele('WithholdingDate').txt(withholdingDate).up();
+    a1.up();
+  });
+
+  return root.end({ prettyPrint: true });
+}
+
 export function generateCoretaxXML(
   perusahaan: DataPerusahaan,
   masaPajakBulan: number,
@@ -510,6 +990,32 @@ export function downloadBpmpXml(
 export function downloadBp21Xml(
   xml: string,
   filename = 'BP21_Coretax.xml'
+): void {
+  const blob = new Blob([xml], { type: 'text/xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadBp26Xml(
+  xml: string,
+  filename = 'BP26_Coretax.xml'
+): void {
+  const blob = new Blob([xml], { type: 'text/xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadBpa1Xml(
+  xml: string,
+  filename = 'BPA1_Coretax.xml'
 ): void {
   const blob = new Blob([xml], { type: 'text/xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);

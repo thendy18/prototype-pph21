@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import {
+  Bp26TaxCertificate,
+  Bpa1StatusOfWithholding,
+  CoretaxYesNo,
   DataKaryawan,
   FasilitasPajak,
   HasilKalkulasiNonPegawai,
@@ -388,6 +391,275 @@ function readTransactionPeriodMonth(row: Record<string, unknown>): number {
       row['Masa Pajak'],
     1
   );
+}
+
+function parseCoretaxYesNo(value: unknown): CoretaxYesNo | undefined {
+  const raw = coerceCellToString(value).toUpperCase();
+  if (!raw) return undefined;
+  if (raw === 'YES' || raw === 'YA' || raw === 'Y' || raw === 'TRUE' || raw === '1') {
+    return 'Yes';
+  }
+  if (raw === 'NO' || raw === 'TIDAK' || raw === 'N' || raw === 'FALSE' || raw === '0') {
+    return 'No';
+  }
+  return undefined;
+}
+
+function parseBpa1StatusOfWithholding(
+  value: unknown
+): Bpa1StatusOfWithholding | undefined {
+  const raw = coerceCellToString(value).toUpperCase().replace(/\s+/g, '');
+  if (!raw) return undefined;
+  if (raw === 'FULLYEAR' || raw === 'FULL') return 'FullYear';
+  if (raw === 'PARTIALYEAR' || raw === 'PARTIAL' || raw === 'KURANGDARISETAHUN') {
+    return 'PartialYear';
+  }
+  if (raw === 'ANNUALIZED' || raw === 'DISETAHUNKAN') return 'Annualized';
+  return undefined;
+}
+
+function readBpa1Cell(row: Record<string, unknown>, field: string): string {
+  return bacaString(
+    row,
+    `BPA1 ${field}`,
+    `BPA1_${field.replace(/\s+/g, '_')}`,
+    field
+  );
+}
+
+function readBpa1Number(
+  row: Record<string, unknown>,
+  field: string
+): number | undefined {
+  const raw = readBpa1Cell(row, field);
+  if (!raw) return undefined;
+  return floorRupiah(raw);
+}
+
+function readBpa1Date(
+  row: Record<string, unknown>,
+  field: string
+): string | undefined {
+  const raw =
+    row[`BPA1 ${field}`] ??
+    row[`BPA1_${field.replace(/\s+/g, '_')}`] ??
+    row[field];
+  const parsed = parseIsoDateCell(raw);
+  return parsed || undefined;
+}
+
+function buildBpa1Metadata(row: Record<string, unknown>): DataKaryawan['bpa1'] {
+  const metadata: DataKaryawan['bpa1'] = {};
+  const workForSecondEmployer = parseCoretaxYesNo(
+    readBpa1Cell(row, 'Work For Second Employer') ||
+      readBpa1Cell(row, 'WorkForSecondEmployer') ||
+      readBpa1Cell(row, 'Pemberi Kerja Selanjutnya')
+  );
+  const statusOfWithholding = parseBpa1StatusOfWithholding(
+    readBpa1Cell(row, 'Status Of Withholding') ||
+      readBpa1Cell(row, 'StatusOfWithholding') ||
+      readBpa1Cell(row, 'Status Bukti Potong')
+  );
+  const taxCertificateRaw =
+    readBpa1Cell(row, 'TaxCertificate') ||
+    readBpa1Cell(row, 'Tax Certificate') ||
+    readBpa1Cell(row, 'Fasilitas Pajak');
+
+  if (workForSecondEmployer) metadata.workForSecondEmployer = workForSecondEmployer;
+  if (statusOfWithholding) metadata.statusOfWithholding = statusOfWithholding;
+
+  const taxObjectCode =
+    readBpa1Cell(row, 'TaxObjectCode') ||
+    readBpa1Cell(row, 'Tax Object Code') ||
+    readBpa1Cell(row, 'Kode Objek Pajak');
+  if (taxObjectCode) metadata.taxObjectCode = taxObjectCode;
+
+  const prevWhTaxSlip =
+    readBpa1Cell(row, 'PrevWhTaxSlip') ||
+    readBpa1Cell(row, 'Prev Wh Tax Slip') ||
+    readBpa1Cell(row, 'Nomor Bukti Potong Sebelumnya');
+  if (prevWhTaxSlip) metadata.prevWhTaxSlip = prevWhTaxSlip;
+
+  if (taxCertificateRaw) {
+    metadata.taxCertificate = parseFasilitasPajak({
+      'Fasilitas Pajak': taxCertificateRaw,
+    });
+  }
+
+  metadata.numberOfMonths = readBpa1Number(row, 'Number Of Months') ?? readBpa1Number(row, 'NumberOfMonths');
+  metadata.incomeTaxBenefit = readBpa1Number(row, 'IncomeTaxBenefit') ?? readBpa1Number(row, 'Income Tax Benefit');
+  metadata.otherBenefit = readBpa1Number(row, 'OtherBenefit') ?? readBpa1Number(row, 'Other Benefit');
+  metadata.honorarium = readBpa1Number(row, 'Honorarium');
+  metadata.insurancePaidByEmployer = readBpa1Number(row, 'InsurancePaidByEmployer') ?? readBpa1Number(row, 'Insurance Paid By Employer');
+  metadata.natura = readBpa1Number(row, 'Natura');
+  metadata.tantiemBonusThr = readBpa1Number(row, 'TantiemBonusThr') ?? readBpa1Number(row, 'Tantiem Bonus THR');
+  metadata.pensionContributionJhtThtFee =
+    readBpa1Number(row, 'PensionContributionJhtThtFee') ??
+    readBpa1Number(row, 'Pension Contribution JHT THT Fee');
+  metadata.zakat = readBpa1Number(row, 'Zakat');
+  metadata.article21IncomeTax = readBpa1Number(row, 'Article21IncomeTax') ?? readBpa1Number(row, 'Article 21 Income Tax');
+  metadata.withholdingDate =
+    readBpa1Date(row, 'WithholdingDate') ??
+    readBpa1Date(row, 'Withholding Date') ??
+    readBpa1Date(row, 'Tanggal Pemotongan');
+
+  const hasMetadata = Object.values(metadata).some((value) => value !== undefined && value !== '');
+  return hasMetadata ? metadata : undefined;
+}
+
+function readPrefixedCell(
+  row: Record<string, unknown>,
+  prefix: string,
+  field: string
+): string {
+  return bacaString(
+    row,
+    `${prefix} ${field}`,
+    `${prefix}_${field.replace(/\s+/g, '_')}`,
+    field
+  );
+}
+
+function readPrefixedNumber(
+  row: Record<string, unknown>,
+  prefix: string,
+  field: string
+): number | undefined {
+  const raw = readPrefixedCell(row, prefix, field);
+  if (!raw) return undefined;
+  const parsed = parseNumericCell(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readPrefixedDate(
+  row: Record<string, unknown>,
+  prefix: string,
+  field: string
+): string {
+  const raw =
+    row[`${prefix} ${field}`] ??
+    row[`${prefix}_${field.replace(/\s+/g, '_')}`] ??
+    row[field];
+  return parseIsoDateCell(raw);
+}
+
+function parseBp26TaxCertificate(value: unknown): Bp26TaxCertificate | undefined {
+  const raw = coerceCellToString(value).toUpperCase();
+  if (!raw) return undefined;
+  if (raw === 'N/A') return 'N/A';
+  if (raw === 'DTP') return 'DTP';
+  if (raw === 'COD') return 'COD';
+  if (raw === 'ETC') return 'ETC';
+  return undefined;
+}
+
+function buildBp26Metadata(row: Record<string, unknown>): DataKaryawan['bp26'] {
+  const counterpartReceiptNumber = readPrefixedCell(
+    row,
+    'BP26',
+    'CounterpartReceiptNumber'
+  );
+  const deemed = readPrefixedNumber(row, 'BP26', 'Deemed');
+  const rate = readPrefixedNumber(row, 'BP26', 'Rate');
+  const taxCertificate =
+    parseBp26TaxCertificate(readPrefixedCell(row, 'BP26', 'TaxCertificate')) ??
+    'N/A';
+  const documentType = bacaString(
+    row,
+    'Document',
+    'Jenis Dokumen',
+    'BP26 Document'
+  );
+  const documentNumber = bacaString(
+    row,
+    'DocumentNumber',
+    'Document Number',
+    'Nomor Dokumen',
+    'BP26 DocumentNumber'
+  );
+  const documentDate = parseIsoDateCell(
+    row['DocumentDate'] ??
+      row['Document Date'] ??
+      row['Tanggal Dokumen'] ??
+      row['BP26 DocumentDate']
+  );
+  const withholdingDate =
+    parseIsoDateCell(
+      row['WithholdingDate'] ??
+        row['Withholding Date'] ??
+        row['Tanggal Pemotongan'] ??
+        row['BP26 WithholdingDate']
+    ) || undefined;
+
+  return {
+    counterpartTin: readPrefixedCell(row, 'BP26', 'CounterpartTin'),
+    counterpartReceiptNumber: counterpartReceiptNumber || '-',
+    country: readPrefixedCell(row, 'BP26', 'Country'),
+    address: readPrefixedCell(row, 'BP26', 'Address'),
+    dateOfBirth: readPrefixedDate(row, 'BP26', 'Date Of Birth'),
+    birthCity: readPrefixedCell(row, 'BP26', 'Birth City'),
+    kitas: readPrefixedCell(row, 'BP26', 'Kitas') || undefined,
+    taxCertificate,
+    taxObjectCode: readPrefixedCell(row, 'BP26', 'TaxObjectCode') || '27-100-99',
+    deemed: deemed ?? 100,
+    rate: rate ?? 20,
+    documentType,
+    documentNumber,
+    documentDate,
+    withholdingDate,
+    hasExplicitDeemed: deemed !== undefined,
+    hasExplicitRate: rate !== undefined,
+    hasExplicitReceiptNumber: counterpartReceiptNumber !== '',
+  };
+}
+
+function validateBp26Metadata(
+  metadata: DataKaryawan['bp26'],
+  rowNumber: number
+): string[] {
+  const errors: string[] = [];
+  if (!metadata) return errors;
+
+  if (!metadata.counterpartTin) {
+    errors.push(`Baris ${rowNumber}: BP26 CounterpartTin wajib diisi.`);
+  }
+  if (!metadata.country) {
+    errors.push(`Baris ${rowNumber}: BP26 Country wajib diisi.`);
+  }
+  if (!metadata.address) {
+    errors.push(`Baris ${rowNumber}: BP26 Address wajib diisi.`);
+  }
+  if (!metadata.dateOfBirth || !isValidIsoDate(metadata.dateOfBirth)) {
+    errors.push(`Baris ${rowNumber}: BP26 Date Of Birth wajib berformat YYYY-MM-DD.`);
+  }
+  if (!metadata.birthCity) {
+    errors.push(`Baris ${rowNumber}: BP26 Birth City wajib diisi.`);
+  }
+  if (!metadata.documentType) {
+    errors.push(`Baris ${rowNumber}: Document wajib diisi untuk BP26.`);
+  }
+  if (!metadata.documentNumber) {
+    errors.push(`Baris ${rowNumber}: DocumentNumber wajib diisi untuk BP26.`);
+  }
+  if (!metadata.documentDate || !isValidIsoDate(metadata.documentDate)) {
+    errors.push(`Baris ${rowNumber}: DocumentDate wajib berformat YYYY-MM-DD untuk BP26.`);
+  }
+  if (metadata.withholdingDate && !isValidIsoDate(metadata.withholdingDate)) {
+    errors.push(`Baris ${rowNumber}: WithholdingDate harus berformat YYYY-MM-DD.`);
+  }
+  if (metadata.taxCertificate === 'COD') {
+    if (!metadata.hasExplicitReceiptNumber || metadata.counterpartReceiptNumber === '-') {
+      errors.push(`Baris ${rowNumber}: BP26 CounterpartReceiptNumber wajib diisi untuk TaxCertificate COD.`);
+    }
+    if (!metadata.hasExplicitDeemed) {
+      errors.push(`Baris ${rowNumber}: BP26 Deemed wajib diisi untuk TaxCertificate COD.`);
+    }
+    if (!metadata.hasExplicitRate) {
+      errors.push(`Baris ${rowNumber}: BP26 Rate wajib diisi untuk TaxCertificate COD.`);
+    }
+  }
+
+  return errors;
 }
 
 function parseMonthFromIsoDate(value: unknown): number | null {
@@ -883,6 +1155,11 @@ function buildEmployeesFromTransactionRows(
 
     const fasilitasPajak = parseFasilitasPajak(row);
     const documentNumber = bacaString(row, 'DocumentNumber', 'Document Number', 'Nomor Dokumen');
+    const bp26Metadata =
+      tipeKaryawan === 'TETAP' && residentStatus === 'NON_RESIDENT'
+        ? buildBp26Metadata(row)
+        : undefined;
+    validationErrors.push(...validateBp26Metadata(bp26Metadata, excelRowNumber));
     const idKaryawan = tipeKaryawan === 'TETAP'
       ? nik
       : makeTransactionEmployeeId(
@@ -909,6 +1186,8 @@ function buildEmployeesFromTransactionRows(
       temporaryTin: bacaString(row, 'Temporary TIN') || undefined,
       noPaspor: parseNoPaspor(row, residentStatus),
       fasilitasPajak,
+      bpa1: tipeKaryawan === 'TETAP' ? buildBpa1Metadata(row) : undefined,
+      bp26: bp26Metadata,
       adaNPWP: statusIdentitas === 'NPWP' || statusIdentitas === 'NIK_VALID',
     };
 
@@ -1095,6 +1374,11 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           floorRupiah(row['Tunj Transport']) +
           floorRupiah(row['Tunjangan Makan']);
         const totalTunjanganTetap = tunjanganTetapUmum + tunjanganRincian;
+        const bp26Metadata =
+          tipeKaryawan === 'TETAP' && residentStatus === 'NON_RESIDENT'
+            ? buildBp26Metadata(row)
+            : undefined;
+        validationErrors.push(...validateBp26Metadata(bp26Metadata, excelRowNumber));
 
         const karyawan: DataKaryawan = {
           idKaryawan: nik,
@@ -1113,6 +1397,8 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           temporaryTin: bacaString(row, 'Temporary TIN') || undefined,
           noPaspor: parseNoPaspor(row, residentStatus),
           fasilitasPajak: parseFasilitasPajak(row),
+          bpa1: tipeKaryawan === 'TETAP' ? buildBpa1Metadata(row) : undefined,
+          bp26: bp26Metadata,
           adaNPWP: statusIdentitas === 'NPWP' || statusIdentitas === 'NIK_VALID',
         };
 
