@@ -1,13 +1,12 @@
 import {
-  createUser,
   resetUserPassword,
   updateUserActiveStatus,
   updateUserRole,
 } from '../../actions/userActions';
 import { listAppUsers } from '../../lib/appUsers';
 import { requireMasterProfile } from '../../lib/auth';
+import { CreateUserForm } from './create-user-form';
 import { Button } from '@/components/ui/button';
-import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -33,14 +32,8 @@ function firstValue(value: string | string[] | undefined): string | null {
 const PANEL_CLASS =
   'rounded-3xl border border-[#6CA6C1]/25 bg-[#2F3061] p-6 shadow-xl shadow-black/20';
 
-const FIELD_CARD_CLASS =
-  'rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 p-4 transition-colors hover:border-[#6CA6C1]/70 focus-within:border-[#6CA6C1]/70 focus-within:ring-2 focus-within:ring-[#6CA6C1]/20';
-
 const LABEL_CLASS =
   'text-[10px] font-black uppercase tracking-[0.2em] text-[#F7FFF7]/55';
-
-const INPUT_CLASS =
-  'h-10 border-none bg-transparent p-0 font-semibold text-[#F7FFF7] shadow-none outline-none placeholder:text-[#6CA6C1]/55 focus-visible:ring-0';
 
 const SELECT_TRIGGER_CLASS =
   'h-10 w-full rounded-xl border-[#6CA6C1]/35 bg-[#343434]/80 font-mono text-sm font-semibold text-[#F7FFF7] transition-all hover:border-[#6CA6C1] hover:bg-[#343434] focus:ring-2 focus:ring-[#6CA6C1]/25 data-[state=open]:border-[#6CA6C1] [&_svg]:text-[#6CA6C1]';
@@ -100,78 +93,7 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
             </p>
           </div>
 
-          <form action={createUser} className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <Field className={`${FIELD_CARD_CLASS} xl:col-span-2`}>
-              <FieldLabel className={LABEL_CLASS}>
-                Nama Lengkap
-              </FieldLabel>
-              <Input
-                name="full_name"
-                className={INPUT_CLASS}
-                placeholder="Nama user"
-              />
-            </Field>
-
-            <Field className={FIELD_CARD_CLASS}>
-              <FieldLabel className={LABEL_CLASS}>
-                Email
-              </FieldLabel>
-              <Input
-                name="email"
-                type="email"
-                className={INPUT_CLASS}
-                placeholder="user@company.com"
-              />
-            </Field>
-
-            <Field className={FIELD_CARD_CLASS}>
-              <FieldLabel className={LABEL_CLASS}>
-                Password Awal
-              </FieldLabel>
-              <Input
-                name="password"
-                type="password"
-                className={INPUT_CLASS}
-                placeholder="Minimal 8 karakter"
-              />
-            </Field>
-
-            <Field className={FIELD_CARD_CLASS}>
-              <FieldLabel className={LABEL_CLASS}>
-                Role
-              </FieldLabel>
-              <Select name="role" defaultValue="staff">
-                <SelectTrigger className={SELECT_TRIGGER_CLASS}>
-                  <SelectValue placeholder="Pilih role" />
-                </SelectTrigger>
-                <SelectContent className={SELECT_CONTENT_CLASS}>
-                  <SelectGroup>
-                    <SelectItem value="staff" className={SELECT_ITEM_CLASS}>staff</SelectItem>
-                    <SelectItem value="master" className={SELECT_ITEM_CLASS}>master</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <label className="flex items-center gap-3 rounded-2xl border border-[#6CA6C1]/25 bg-[#343434]/80 p-4 text-sm text-[#F7FFF7]/75 transition-colors hover:border-[#6CA6C1]/70 xl:col-span-5">
-              <input
-                name="is_active"
-                type="checkbox"
-                defaultChecked
-                className="h-4 w-4 rounded border-[#6CA6C1]/50 bg-[#343434] accent-[#FFE66D]"
-              />
-              User aktif saat dibuat
-            </label>
-
-            <div className="xl:col-span-5">
-              <Button
-                type="submit"
-                className="h-11 rounded-2xl bg-[#FFE66D] px-5 text-sm font-black text-[#343434] hover:bg-[#F7FFF7] focus-visible:ring-[#FFE66D]/30"
-              >
-                Buat User
-              </Button>
-            </div>
-          </form>
+          <CreateUserForm />
         </section>
 
         <section className={PANEL_CLASS}>

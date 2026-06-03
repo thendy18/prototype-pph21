@@ -1,0 +1,23 @@
+
+> payroll-coretax@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.2 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.102:3000
+- Environments: .env
+✓ Ready in 295ms
+
+ GET /login?reason=signin 200 in 302ms (next.js: 106ms, proxy.ts: 5ms, application-code: 191ms)
+ GET /login?reason=signin 200 in 35ms (next.js: 3ms, proxy.ts: 3ms, application-code: 28ms)
+ GET /login?reason=signin 200 in 30ms (next.js: 2ms, proxy.ts: 3ms, application-code: 25ms)
+ GET /login?reason=signin 200 in 29ms (next.js: 1611µs, proxy.ts: 3ms, application-code: 25ms)
+ GET /login?reason=signin 200 in 56ms (next.js: 3ms, proxy.ts: 6ms, application-code: 47ms)
+ GET /login?reason=signin 200 in 28ms (next.js: 3ms, proxy.ts: 1886µs, application-code: 24ms)
+ GET /login?reason=signin 200 in 34ms (next.js: 3ms, proxy.ts: 3ms, application-code: 28ms)
+ GET /login?reason=signin 200 in 36ms (next.js: 7ms, proxy.ts: 5ms, application-code: 23ms)
+ GET /login?reason=signin 200 in 33ms (next.js: 2ms, proxy.ts: 3ms, application-code: 27ms)
+ GET /bulk 200 in 433ms (next.js: 18ms, proxy.ts: 197ms, application-code: 219ms)
+ POST /login?reason=signin 303 in 1028ms (next.js: 3ms, proxy.ts: 5ms, application-code: 1020ms)
+  └─ ƒ login({}, {}) in 573ms src/actions/authActions.ts
+ GET /users 200 in 787ms (next.js: 27ms, proxy.ts: 285ms, application-code: 475ms)

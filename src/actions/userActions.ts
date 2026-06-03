@@ -36,8 +36,23 @@ function ensureStrongEnoughPassword(password: string): boolean {
   return password.length >= 8;
 }
 
-export async function createUser(formData: FormData): Promise<void> {
-  const actor = await requireMasterProfile();
+type CreateUserInput = {
+  fullName: string;
+  email: string;
+  password: string;
+  role: AppRole;
+  isActive: boolean;
+};
+
+type CreateUserFeedbackState = {
+  status: 'idle' | 'error';
+  message: string;
+};
+
+function readCreateUserInput(formData: FormData): {
+  input: CreateUserInput | null;
+  error: string | null;
+} {
   const fullName = getTrimmedValue(formData, 'full_name');
   const email = getTrimmedValue(formData, 'email').toLowerCase();
   const password = getTrimmedValue(formData, 'password');
@@ -45,39 +60,105 @@ export async function createUser(formData: FormData): Promise<void> {
   const isActive = isChecked(formData, 'is_active');
 
   if (!fullName || !email || !password || !role) {
-    redirectUsers('error', 'Nama, email, password, dan role wajib diisi.');
+    return {
+      input: null,
+      error: 'Nama, email, password, dan role wajib diisi.',
+    };
   }
 
   if (!ensureStrongEnoughPassword(password)) {
-    redirectUsers('error', 'Password minimal 8 karakter.');
+    return {
+      input: null,
+      error: 'Password minimal 8 karakter.',
+    };
   }
 
+  return {
+    input: {
+      fullName,
+      email,
+      password,
+      role,
+      isActive,
+    },
+    error: null,
+  };
+}
+
+async function createAuthUserAndProfile(
+  actorId: string,
+  input: CreateUserInput
+): Promise<string | null> {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.auth.admin.createUser({
-    email,
-    password,
+    email: input.email,
+    password: input.password,
     email_confirm: true,
     user_metadata: {
-      full_name: fullName,
+      full_name: input.fullName,
     },
   });
 
   if (error || !data.user) {
-    redirectUsers('error', error?.message ?? 'Gagal membuat user auth.');
+    return error?.message ?? 'Gagal membuat user auth.';
   }
 
   const { error: insertError } = await admin.from('app_users').insert({
     id: data.user.id,
-    email,
-    full_name: fullName,
-    role,
-    is_active: isActive,
-    created_by: actor.id,
+    email: input.email,
+    full_name: input.fullName,
+    role: input.role,
+    is_active: input.isActive,
+    created_by: actorId,
   });
 
   if (insertError) {
     await admin.auth.admin.deleteUser(data.user.id);
-    redirectUsers('error', `User auth dibuat tetapi profil app gagal dibuat: ${insertError.message}`);
+    return `User auth dibuat tetapi profil app gagal dibuat: ${insertError.message}`;
+  }
+
+  return null;
+}
+
+export async function createUser(formData: FormData): Promise<void> {
+  const actor = await requireMasterProfile();
+  const { input, error: inputError } = readCreateUserInput(formData);
+
+  if (inputError || !input) {
+    redirectUsers('error', inputError ?? 'Input user tidak valid.');
+  }
+
+  const createError = await createAuthUserAndProfile(actor.id, input);
+
+  if (createError) {
+    redirectUsers('error', createError);
+  }
+
+  revalidatePath('/users');
+  redirectUsers('success', 'User baru berhasil dibuat.');
+}
+
+export async function createUserWithFeedback(
+  _previousState: CreateUserFeedbackState,
+  formData: FormData
+): Promise<CreateUserFeedbackState> {
+  const actor = await requireMasterProfile();
+  const { input, error: inputError } = readCreateUserInput(formData);
+
+  if (inputError || !input) {
+    return {
+      status: 'error',
+      message: inputError ?? 'Input user tidak valid.',
+    };
+  }
+
+  const createError = await createAuthUserAndProfile(actor.id, input);
+
+  if (createError) {
+    return {
+      status: 'error',
+      message: createError,
+    };
   }
 
   revalidatePath('/users');
