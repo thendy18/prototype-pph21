@@ -18,6 +18,10 @@ function formatDateTime(value: string): string {
   });
 }
 
+function shortUserId(value: string): string {
+  return value ? `${value.slice(0, 8)}...` : '-';
+}
+
 const scrollPanelClass =
   'overflow-y-auto pr-2 [scrollbar-color:#6CA6C1_#343434] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-[#343434]/70 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#6CA6C1]/55 [&::-webkit-scrollbar-thumb:hover]:bg-[#FFE66D]/70';
 
@@ -255,8 +259,21 @@ export default async function PayrollHistoryPage() {
                     <div className="mt-2 text-sm font-semibold text-[#F7FFF7]">
                       {event.description}
                     </div>
-                    <div className="mt-1 text-xs text-[#F7FFF7]/45">
-                      {formatDateTime(event.createdAt)}
+                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#F7FFF7]/45">
+                      <span>
+                        Oleh{' '}
+                        <span className="font-semibold text-[#F7FFF7]/70">
+                          {event.createdByName ??
+                            event.createdByEmail ??
+                            shortUserId(event.createdBy)}
+                        </span>
+                      </span>
+                      {event.createdByEmail && (
+                        <span className="text-[#6CA6C1]/80">
+                          {event.createdByEmail}
+                        </span>
+                      )}
+                      <span>{formatDateTime(event.createdAt)}</span>
                     </div>
                   </div>
                 ))}

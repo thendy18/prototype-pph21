@@ -1,4 +1,5 @@
 import { requireCurrentUserProfile } from './auth';
+import { createSupabaseAdminClient } from './supabaseAdmin';
 import { createSupabaseServerClient } from './supabaseServer';
 import type {
   PayrollAuditEventListItem,
@@ -195,6 +196,44 @@ type PayrollAuditEventRow = {
   created_at: string;
 };
 
+type AuditActorRow = {
+  id: string;
+  email: string;
+  full_name: string;
+};
+
+type AuditActor = {
+  name: string;
+  email: string;
+};
+
+async function getAuditActorMap(userIds: string[]): Promise<Map<string, AuditActor>> {
+  const uniqueIds = Array.from(new Set(userIds.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from('app_users')
+    .select('id, email, full_name')
+    .in('id', uniqueIds);
+
+  if (error) {
+    return new Map();
+  }
+
+  return new Map(
+    ((data ?? []) as AuditActorRow[]).map((row) => [
+      row.id,
+      {
+        name: row.full_name,
+        email: row.email,
+      },
+    ])
+  );
+}
+
 export async function listPayrollPeriodLocks(): Promise<
   PayrollPeriodLockListItem[]
 > {
@@ -239,7 +278,10 @@ export async function listPayrollAuditEvents(): Promise<
 
   if (error) return [];
 
-  return ((data ?? []) as PayrollAuditEventRow[]).map((row) => ({
+  const rows = (data ?? []) as PayrollAuditEventRow[];
+  const actorMap = await getAuditActorMap(rows.map((row) => row.created_by));
+
+  return rows.map((row) => ({
     id: row.id,
     eventType: row.event_type,
     periodMonth: row.period_month,
@@ -249,6 +291,8 @@ export async function listPayrollAuditEvents(): Promise<
     description: row.description,
     metadata: row.metadata,
     createdBy: row.created_by,
+    createdByName: actorMap.get(row.created_by)?.name ?? null,
+    createdByEmail: actorMap.get(row.created_by)?.email ?? null,
     createdAt: row.created_at,
   }));
 }

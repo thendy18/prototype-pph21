@@ -85,6 +85,8 @@ export type PayrollAuditEventListItem = {
   description: string;
   metadata: Record<string, unknown> | null;
   createdBy: string;
+  createdByName: string | null;
+  createdByEmail: string | null;
   createdAt: string;
 };
 

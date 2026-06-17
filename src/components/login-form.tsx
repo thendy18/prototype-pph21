@@ -72,7 +72,7 @@ export function LoginForm({
         </Field>
 
         {state.error && (
-          <div className="rounded-2xl border border-[#FFE66D]/40 bg-[#FFE66D]/10 px-4 py-3 text-sm font-semibold text-[#FFE66D]">
+          <div className="rounded-2xl border border-[#FF6B6B]/40 bg-[#FFE66D]/10 px-4 py-3 text-sm font-semibold text-[#FF6B6B]">
             {state.error}
           </div>
         )}
